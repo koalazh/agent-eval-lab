@@ -69,6 +69,10 @@ The report should say what is observed and what remains unknown, rather than cla
 
 AEL focuses on matrix execution, differential comparison, evidence fusion, failure investigation, failure-to-experiment, and failure-to-regression. It is not a distributed runner, agent runtime, generic plugin framework, OTel backend, or cloud service.
 
+## Differential evidence
+
+The deterministic Failure Explorer first checks Case revision, selects the closest PASS reference, and shows SAME/CHANGED/UNKNOWN variables, confidence (`CONTROLLED`, `PARTIAL`, or `DESCRIPTIVE`), verifier/workspace evidence, normalized anchor timelines, and the first meaningful divergence. If the reference or anchor evidence is insufficient it says so; it does not invent a causal root cause.
+
 ## License
 
 Internal greenfield prototype.

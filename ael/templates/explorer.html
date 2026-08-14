@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Failure Explorer</h1>
+<p><strong>Candidate run:</strong> <code>{{ explorer.run_id }}</code></p>
+<p>{{ explorer.note }}</p>
+<section>
+  <h2>Outcome diff</h2>
+  <pre>{{ explorer.candidate }}</pre>
+  {% if explorer.matched_reference %}
+  <p><strong>Matched PASS reference:</strong> <code>{{ explorer.matched_reference.run_id }}</code></p>
+  {% else %}
+  <p class="unknown">No sufficient same-revision PASS reference. Trajectory attribution is withheld.</p>
+  {% endif %}
+</section>
+<section>
+  <h2>Artifact diff</h2>
+  <pre>{{ explorer.artifact_diff.diff }}</pre>
+</section>
+<section>
+  <h2>Timeline diff</h2>
+  <pre>{{ explorer.timeline_diff }}</pre>
+  <p><strong>First meaningful divergence:</strong> {{ explorer.first_meaningful_divergence }}</p>
+</section>
+<section>
+  <h2>Evidence coverage</h2>
+  <pre>{{ explorer.evidence_coverage }}</pre>
+</section>
+{% endblock %}
+

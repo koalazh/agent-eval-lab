@@ -7,7 +7,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .hashing import hash_file_tree
 from .redaction import redact
 
 
@@ -17,37 +16,36 @@ class WorkspaceManager:
         self.workspace_root = evidence_root / "workspaces"
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
-    def create(self, fixture: Path, run_id: str) -> tuple[Path, dict[str, str]]:
+    def create(self, fixture: Path, run_id: str) -> tuple[Path, dict[str, bytes]]:
         if not fixture.exists() or not fixture.is_dir():
             raise ValueError(f"fixture directory does not exist: {fixture}")
         workspace = Path(tempfile.mkdtemp(prefix=f"{run_id}-", dir=self.workspace_root))
         shutil.copytree(fixture, workspace, dirs_exist_ok=True)
         return workspace, self.snapshot(workspace)
 
-    def snapshot(self, root: Path) -> dict[str, str]:
+    def snapshot(self, root: Path) -> dict[str, bytes]:
         return {
-            str(item.relative_to(root)): hash_file_tree(item)
+            str(item.relative_to(root)): item.read_bytes()
             for item in sorted(p for p in root.rglob("*") if p.is_file())
         }
 
-    def capture(self, root: Path, before: dict[str, str], evidence_dir: Path) -> dict[str, Any]:
+    def capture(self, root: Path, before: dict[str, bytes], evidence_dir: Path) -> dict[str, Any]:
         after = self.snapshot(root)
         changed = sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
         deleted = sorted(path for path in set(before) - set(after))
         added = sorted(path for path in set(after) - set(before))
         diff_lines: list[str] = []
         for relative in changed:
-            target = root / relative
             before_text = ""
-            if relative in before and target.exists():
+            if relative in before:
                 try:
-                    before_text = target.read_text(encoding="utf-8")
+                    before_text = before[relative].decode("utf-8")
                 except UnicodeDecodeError:
                     before_text = "<binary or non-UTF8 file>"
             after_text = ""
-            if relative in after and target.exists():
+            if relative in after:
                 try:
-                    after_text = target.read_text(encoding="utf-8")
+                    after_text = after[relative].decode("utf-8")
                 except UnicodeDecodeError:
                     after_text = "<binary or non-UTF8 file>"
             diff_lines.extend(
@@ -77,4 +75,3 @@ class WorkspaceManager:
     @staticmethod
     def cleanup(root: Path) -> None:
         shutil.rmtree(root, ignore_errors=True)
-

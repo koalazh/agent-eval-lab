@@ -68,6 +68,12 @@ def create_app(root: str | Path = ".") -> FastAPI:
             verifier=_read_json(evidence / "verifier" / "result.json"),
         )
 
+    @app.get("/runs/{run_id}/explorer", response_class=HTMLResponse)
+    async def explorer_page(request: Request, run_id: str):
+        if not repository.get_run(run_id):
+            return HTMLResponse("Run not found", status_code=404)
+        return render(request, "explorer.html", title=f"Failure Explorer {run_id}", explorer=compare_run_details(repository, run_id))
+
     @app.get("/failures", response_class=HTMLResponse)
     async def failures_page(request: Request):
         return render(request, "failures.html", title="Failures", failures=repository.list_failures())
@@ -98,4 +104,3 @@ def _read_json(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {"value": value}
-
