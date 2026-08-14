@@ -7,6 +7,7 @@ from typing import Any
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|authorization|bearer|token|password|secret)(\s*[:=]\s*)([A-Za-z0-9_./+=:-]{8,})"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9_./+=:-]{8,}"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
     re.compile(r"\b(?:ghp|github_pat|xoxb|xoxp|AIza)[A-Za-z0-9_-]{12,}\b"),
 )
@@ -36,4 +37,3 @@ def redact(value: Any) -> Any:
 
 def redact_json(value: Any) -> str:
     return json.dumps(redact(value), sort_keys=True, indent=2, ensure_ascii=False, default=str)
-

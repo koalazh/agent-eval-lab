@@ -15,6 +15,7 @@ from .models import AgentVariant, DriverResult, ObservableEvent, ObservationProf
 from .persistence import Repository
 from .process import ProcessSupervisor
 from .redaction import redact
+from .observation import filter_event_data, filter_jsonl
 from .verifier import run_verifier
 from .workspace import WorkspaceManager
 
@@ -104,6 +105,9 @@ class Runner:
                     "ael.trial": trial,
                 }.items()
             )
+            endpoint = os.environ.get("AEL_OTEL_ENDPOINT")
+            if endpoint:
+                env["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
         context = RunContext(
             run_id=run_id,
             experiment_id=experiment.id,
@@ -161,7 +165,9 @@ class Runner:
         events = result.native_events
         native_dir = evidence_dir / "native"
         native_dir.mkdir(parents=True, exist_ok=True)
-        (native_dir / "stdout.log").write_text(redact(result.stdout), encoding="utf-8")
+        raw_native = filter_jsonl(result.stdout, variant.observation_profile)
+        (native_dir / "raw.jsonl").write_text(raw_native, encoding="utf-8")
+        (native_dir / "stdout.log").write_text(raw_native, encoding="utf-8")
         (native_dir / "stderr.log").write_text(redact(result.stderr), encoding="utf-8")
         (native_dir / "events.jsonl").write_text(
             "".join(json.dumps(redact(event.to_dict()), sort_keys=True) + "\n" for event in events),
@@ -169,6 +175,12 @@ class Runner:
         )
         telemetry_dir = evidence_dir / "telemetry"
         telemetry_dir.mkdir(parents=True, exist_ok=True)
+        telemetry_raw = telemetry_dir / "raw"
+        telemetry_raw.mkdir(parents=True, exist_ok=True)
+        (telemetry_raw / "events.jsonl").write_text(
+            "".join(json.dumps(filter_event_data(event.to_dict(), variant.observation_profile), sort_keys=True) + "\\n" for event in events if event.source == "otel"),
+            encoding="utf-8",
+        )
         (telemetry_dir / "summary.json").write_text(json.dumps(redact(result.usage), indent=2, sort_keys=True), encoding="utf-8")
         (evidence_dir / "metadata.json").write_text(
             json.dumps(
@@ -241,4 +253,3 @@ class Runner:
             raise
         self.repository.set_experiment_status(experiment.id, "COMPLETED")
         return results
-

@@ -39,6 +39,12 @@ The read-only M1 probe currently reports Codex CLI 0.147.0, Claude Code 2.1.229,
 
 The real adapters use current machine help and official machine interfaces: Codex exec JSONL, Claude non-interactive stream JSON, Pi RPC JSONL, and Hermes one-shot with a usage file. Their native output stays in each Run's native evidence directory.
 
+## Observation profiles and OTel
+
+Runs default to minimal observation. Minimal and telemetry retain normalized behavior summaries but omit structured prompt, tool-argument, tool-result, and transcript fields; deep is explicit and preserves those fields subject to credential redaction. Every Run records its ObservationProfile in the fingerprint.
+
+Optional telemetry uses per-run OpenTelemetry resource attributes and never edits user-global Agent configuration. The sample Collector at `infra/otel-collector.yaml` binds only to localhost and exports to a local debug exporter. Without a Collector, AEL still runs; the doctor result says `NOT_FOUND`.
+
 ## Example
 
 A future comparison should be readable as:
