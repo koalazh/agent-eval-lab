@@ -9,7 +9,7 @@
 <section>
   <p class="muted">诊断建议</p>
   <h2>验证策略可能改变完成行为</h2>
-  <p>基线 Baseline 与候选 Candidate 必须真的改变一个 independent variable（独立变量）；本页提交后会直接运行两个 Variant × Case × Trial。</p>
+  <p>基线 Baseline 与候选 Candidate 必须真的改变一个独立变量；本页提交后会直接运行两个 Variant × Case × Trial。</p>
 </section>
 
 <section class="two-col">
@@ -17,19 +17,41 @@
   <div class="card">
     <p class="muted">{{ label }}</p>
     <h2>{{ variant.agent_id }} / {{ "默认配置" if variant.model in ["default", "unknown"] else variant.model }}</h2>
-    <p>运行模式：<strong>{{ variant.run_mode.value }}</strong></p>
-    <p>verification_gate: <strong>{{ variant.harness_config.get("verification_gate", false) }}</strong></p>
+    <p>运行模式：<strong>{{ {"controlled": "受控", "native": "原生"}.get(variant.run_mode.value, variant.run_mode.value) }}</strong></p>
+    <p>verification_gate：<strong>{{ "开启" if variant.harness_config.get("verification_gate") is true else "关闭" }}</strong></p>
   </div>
   {% endfor %}
+</section>
+
+{% set baseline = draft.variants[0] %}
+{% set candidate = draft.variants[1] %}
+<section class="follow-up-compare-section">
+  <div class="section-heading"><div><p class="eyebrow">实验设计核对</p><h2>基线 vs 候选</h2></div><span class="pill pill-success">必须存在真实变量差异</span></div>
+  <p class="section-lede">提交前先核对固定项和变化项。只有这张表中的候选 Variant 真正不同，后续 Run 才能解释独立变量的影响。</p>
+  <div class="follow-up-table-wrap">
+    <table class="follow-up-table">
+      <thead><tr><th>比较维度</th><th>基线 Baseline</th><th>候选 Candidate</th><th>是否变化</th></tr></thead>
+      <tbody>
+        <tr><th>Agent</th><td>{{ baseline.agent_id }}</td><td>{{ candidate.agent_id }}</td><td>{{ "变化" if baseline.agent_id != candidate.agent_id else "固定" }}</td></tr>
+        <tr><th>Model</th><td>{{ "默认配置" if baseline.model in ["default", "unknown"] else baseline.model }}</td><td>{{ "默认配置" if candidate.model in ["default", "unknown"] else candidate.model }}</td><td>{{ "变化" if baseline.model != candidate.model else "固定" }}</td></tr>
+        <tr><th>Provider</th><td>{{ "默认配置" if baseline.provider in ["default", "unknown"] else baseline.provider }}</td><td>{{ "默认配置" if candidate.provider in ["default", "unknown"] else candidate.provider }}</td><td>{{ "变化" if baseline.provider != candidate.provider else "固定" }}</td></tr>
+        <tr><th>运行模式</th><td>{{ {"controlled": "受控", "native": "原生"}.get(baseline.run_mode.value, baseline.run_mode.value) }}</td><td>{{ {"controlled": "受控", "native": "原生"}.get(candidate.run_mode.value, candidate.run_mode.value) }}</td><td>{{ "变化" if baseline.run_mode != candidate.run_mode else "固定" }}</td></tr>
+        <tr><th>verification_gate</th><td>{{ "开启" if baseline.harness_config.get("verification_gate") is true else "关闭" if baseline.harness_config.get("verification_gate") is false else "未配置" }}</td><td>{{ "开启" if candidate.harness_config.get("verification_gate") is true else "关闭" if candidate.harness_config.get("verification_gate") is false else "未配置" }}</td><td>{{ "变化" if baseline.harness_config.get("verification_gate") != candidate.harness_config.get("verification_gate") else "固定" }}</td></tr>
+        <tr><th>Case revision</th><td colspan="2">同一 Suite / 同一不可变 revision</td><td>固定</td></tr>
+        <tr><th>观测配置</th><td>{{ {"telemetry": "遥测", "minimal": "最小", "deep": "深度"}.get(baseline.observation_profile.value, baseline.observation_profile.value) }}</td><td>{{ {"telemetry": "遥测", "minimal": "最小", "deep": "深度"}.get(candidate.observation_profile.value, candidate.observation_profile.value) }}</td><td>{{ "变化" if baseline.observation_profile != candidate.observation_profile else "固定" }}</td></tr>
+        <tr><th>试验次数</th><td colspan="2">{{ draft.trials }} 次 / {{ draft.max_concurrency }} 并发</td><td>固定</td></tr>
+      </tbody>
+    </table>
+  </div>
 </section>
 
 <section>
   <h2>编辑并运行</h2>
   <form method="post" action="/runs/{{ run_id }}/follow-up">
-    <label>要改变的 independent variable（独立变量）
+    <label>要改变的独立变量
       <select name="independent_variable">
         <option value="verification_gate" selected>verification_gate（AEL Harness）</option>
-        <option value="run_mode">运行模式（run mode）</option>
+        <option value="run_mode">运行模式</option>
         <option value="agent">Agent</option>
       </select>
     </label>

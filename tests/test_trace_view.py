@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from ael.trace_view import align_trajectories, build_trace_view, build_trajectory
+from ael.trace_view import (
+    align_trajectories,
+    build_metric_snapshot,
+    build_telemetry_overview,
+    build_trace_view,
+    build_trajectory,
+)
 
 
 def _otel_event(
@@ -61,6 +67,31 @@ def test_trace_view_keeps_signal_boundaries_and_does_not_fake_spans():
     assert len(view["axis_ticks"]) == 5
     assert view["events"][0]["operation"] == "调用 Read"
     assert view["events"][1]["duration_label"] == "100 ms"
+
+
+def test_trace_view_exposes_real_span_context_only_for_trace_signal():
+    event = _otel_event(
+        signal="traces",
+        kind="message",
+        name="agent.run",
+        timestamp="1000000000",
+        record={
+            "startTimeUnixNano": "1000000000",
+            "endTimeUnixNano": "1200000000",
+            "traceId": "trace-1",
+            "spanId": "span-1",
+            "parentSpanId": "parent-1",
+            "kind": "SPAN_KIND_INTERNAL",
+            "events": [{"name": "tool_call"}],
+        },
+    )
+    view = build_trace_view([event], [])
+
+    assert view["has_trace_spans"] is True
+    assert view["events"][0]["trace_id"] == "trace-1"
+    assert view["events"][0]["span_id"] == "span-1"
+    assert view["events"][0]["parent_span_id"] == "parent-1"
+    assert view["events"][0]["span_event_count"] == 1
 
 
 def test_trace_view_keeps_tool_call_before_result_when_duration_is_inferred():
@@ -132,6 +163,54 @@ def test_otel_message_records_do_not_look_like_agent_completion():
 
     assert view["events"][0]["operation"] == "Model 调用"
     assert steps == []
+
+
+def test_metric_snapshot_keeps_telemetry_fields_comparable_and_unknown_explicit():
+    events = [
+        _otel_event(
+            signal="logs",
+            kind="message",
+            name="api_request",
+            timestamp="1000000000",
+            attributes={"model": "model-x", "input_tokens": 100, "output_tokens": 25},
+        ),
+        _otel_event(
+            signal="logs",
+            kind="tool_call",
+            name="tool_decision",
+            timestamp="1100000000",
+            attributes={"tool_name": "Bash"},
+        ),
+        _otel_event(
+            signal="metrics",
+            kind="message",
+            name="claude_code.token.usage",
+            timestamp="1200000000",
+            attributes={"type": "cacheRead"},
+            record={"timeUnixNano": "1200000000", "asInt": 40},
+        ),
+    ]
+    telemetry = {"otel": {"model_calls": 1, "tool_calls": 1, "input_tokens": 100, "output_tokens": 25}}
+    view = build_trace_view(events, [])
+    metrics = build_metric_snapshot(telemetry, events, [], view)
+
+    assert metrics["total_tokens"] == 125
+    assert metrics["cache_read_tokens"] == 40
+    assert metrics["models"] == ["model-x"]
+    assert metrics["cost_usd"] is None
+    assert metrics["otel_spans"] == 0
+
+
+def test_telemetry_overview_keeps_missing_cache_metrics_unknown():
+    overview = build_telemetry_overview(
+        {"otel": {"input_tokens": 10, "output_tokens": 2}},
+        [],
+        {"signal_counts": {}},
+    )
+    cards = {card["label"]: card["value"] for card in overview["cards"]}
+
+    assert cards["缓存读取"] == "未知"
+    assert cards["缓存创建"] == "未知"
 
 
 def test_trajectory_alignment_marks_first_different_action():

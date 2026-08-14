@@ -36,9 +36,9 @@
         <p class="agent-capability-note">{{ capabilities.notes|join("；") }}</p>
         {% if available %}
         <div class="agent-config-fields">
-          <label>Model / 别名<input type="text" name="model_{{ agent.id }}" value="{{ form.get('model_' ~ agent.id, ['default'])[-1] }}" aria-label="模型 {{ agent.id }}"></label>
+          <label>Model（模型）/ 别名<input type="text" name="model_{{ agent.id }}" value="{{ form.get('model_' ~ agent.id, ['default'])[-1] }}" aria-label="模型 {{ agent.id }}"></label>
           <label>Provider（提供方）<input type="text" name="provider_{{ agent.id }}" value="{{ form.get('provider_' ~ agent.id, ['default'])[-1] }}" aria-label="Provider {{ agent.id }}"></label>
-          <div class="two-col"><label>运行模式<select name="run_mode_{{ agent.id }}"><option value="native">native（原生）</option><option value="controlled">controlled（受控）</option></select></label><label>观测配置<select name="observation_profile_{{ agent.id }}"><option value="minimal">minimal（最小）</option><option value="telemetry">telemetry（遥测）</option><option value="deep">deep（深度）</option></select></label></div>
+          <div class="two-col"><label>运行模式<select name="run_mode_{{ agent.id }}"><option value="native">原生（native）</option><option value="controlled">受控（controlled）</option></select></label><label>观测配置<select name="observation_profile_{{ agent.id }}"><option value="minimal">最小（minimal）</option><option value="telemetry">遥测（telemetry）</option><option value="deep">深度（deep）</option></select></label></div>
           <label>Agent 专属配置（JSON，可选）<textarea name="config_{{ agent.id }}" placeholder='{"permission_mode":"..."}'>{{ form.get('config_' ~ agent.id, [''])[-1] }}</textarea></label>
         </div>
         {% else %}<div class="unsupported-note">当前页面不会把不可用 Agent 放进合法 Variant。</div>{% endif %}

@@ -9,6 +9,7 @@ from typing import Any
 from .hashing import UNKNOWN, canonical_json
 from .persistence import Repository
 from .reports import matrix_report, trial_summary
+from .trace_view import build_metric_snapshot, build_trace_view
 
 
 _FINGERPRINT_FIELDS = (
@@ -332,6 +333,20 @@ def _verifier_result(run: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    result: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            result.append(value)
+    return result
+
+
 def _timeline(repository: Repository, run: dict[str, Any]) -> list[dict[str, Any]]:
     steps = _action_steps(_events(repository, run))
     artifact = artifact_diff(repository, run)
@@ -379,25 +394,352 @@ def _run_summary(repository: Repository, run: dict[str, Any]) -> dict[str, Any]:
                 telemetry = value
         except json.JSONDecodeError:
             pass
-    native_usage = telemetry.get("native_usage") if isinstance(telemetry.get("native_usage"), dict) else telemetry
     otel = telemetry.get("otel") if isinstance(telemetry.get("otel"), dict) else {}
     artifact = artifact_diff(repository, run)
-    timeline = _timeline(repository, run)
+    evidence_root = Path(run["run_dir"])
+    otel_events = _read_jsonl(evidence_root / "telemetry" / "otel" / "events.jsonl")
+    native_events = _read_jsonl(evidence_root / "native" / "events.jsonl")
+    trace_view = build_trace_view(otel_events, native_events)
+    metrics = build_metric_snapshot(telemetry, otel_events, native_events, trace_view)
+    fingerprint = run.get("fingerprint") if isinstance(run.get("fingerprint"), dict) else {}
     return {
         "status": run.get("run_status"),
         "outcome": run.get("task_outcome"),
         "tests": (_verifier_result(run).get("outcome") or "UNKNOWN"),
         "duration_seconds": metadata.get("duration_seconds"),
         "tokens": {
-            "input": native_usage.get("input_tokens") if isinstance(native_usage, dict) else None,
-            "output": native_usage.get("output_tokens") if isinstance(native_usage, dict) else None,
+            "input": metrics["input_tokens"],
+            "output": metrics["output_tokens"],
             "otel_input": otel.get("input_tokens"),
             "otel_output": otel.get("output_tokens"),
         },
-        "tool_calls": sum(1 for step in timeline if step["group"] == "TOOL"),
+        "tool_calls": metrics["tool_calls"],
         "changed_files": artifact.get("meaningful_changed_files", []),
         "evidence_coverage": run.get("evidence_coverage", {}),
         "otel": otel,
+        "metrics": metrics,
+        "metric_labels": {
+            "total_tokens": _number_label(metrics.get("total_tokens")),
+            "tool_calls": _number_label(metrics.get("tool_calls")),
+            "model_calls": _number_label(metrics.get("model_calls")),
+            "cost_usd": _cost_label(metrics.get("cost_usd")),
+        },
+        "identity": {
+            "agent": fingerprint.get("agent_id"),
+            "agent_version": fingerprint.get("agent_version"),
+            "model": fingerprint.get("model"),
+            "provider": fingerprint.get("provider"),
+            "variant_id": run.get("variant_id"),
+        },
+    }
+
+
+def _mean(values: list[Any]) -> float | None:
+    numbers: list[float] = []
+    for value in values:
+        try:
+            numbers.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return sum(numbers) / len(numbers) if numbers else None
+
+
+def _number_label(value: Any, fallback: str = "未知", decimals: int = 0) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if decimals == 0:
+        return f"{int(round(number)):,}"
+    return f"{number:,.{decimals}f}"
+
+
+def _seconds_label(value: Any) -> str:
+    try:
+        return f"{float(value):.2f} 秒"
+    except (TypeError, ValueError):
+        return "未知"
+
+
+def _cost_label(value: Any) -> str:
+    try:
+        return f"${float(value):.4f}"
+    except (TypeError, ValueError):
+        return "未知"
+
+
+def _configured_label(value: Any) -> str:
+    value = str(value or "default")
+    return "默认配置" if value.lower() in {"default", "unknown"} else value
+
+
+def _aggregate_metric(summaries: list[dict[str, Any]], key: str) -> float | None:
+    return _mean([(summary.get("metrics") or {}).get(key) for summary in summaries])
+
+
+def _evidence_label(metrics: dict[str, Any]) -> str:
+    if metrics.get("otel_events") is None:
+        return "未知"
+    return (
+        f"logs {_number_label(metrics.get('otel_logs'))} · "
+        f"metrics {_number_label(metrics.get('otel_metrics'))} · "
+        f"span {_number_label(metrics.get('otel_spans'))}"
+    )
+
+
+def _comparison_row(
+    repository: Repository,
+    case_id: str,
+    variant_id: str,
+    runs: list[dict[str, Any]],
+    variant: dict[str, Any],
+    *,
+    differential: bool,
+    target_run_id: str | None,
+) -> dict[str, Any]:
+    summaries = [_run_summary(repository, run) for run in runs]
+    outcomes = [run.get("task_outcome", run.get("outcome", "UNKNOWN")) for run in runs]
+    result = trial_summary(outcomes)
+    metric_values = {
+        key: _aggregate_metric(summaries, key)
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_creation_tokens",
+            "total_tokens",
+            "cost_usd",
+            "otel_duration_ms",
+            "model_calls",
+            "tool_calls",
+            "tool_errors",
+            "otel_events",
+            "otel_logs",
+            "otel_metrics",
+            "otel_spans",
+            "native_events",
+        )
+    }
+    changed_files = _mean([len(summary.get("changed_files") or []) for summary in summaries])
+    actual_models = sorted(
+        {
+            model
+            for summary in summaries
+            for model in (summary.get("metrics") or {}).get("models", [])
+        }
+    )
+    configured_model = _configured_label(variant.get("model"))
+    model_label = ", ".join(actual_models) if actual_models else ("未知" if configured_model == "默认配置" else configured_model)
+    configured_provider = _configured_label(variant.get("provider"))
+    provider_label = "未知" if configured_provider == "默认配置" else configured_provider
+    model_calls = metric_values["model_calls"]
+    tool_calls = metric_values["tool_calls"]
+    tool_errors = metric_values["tool_errors"]
+    return {
+        "case_id": case_id,
+        "variant_id": variant_id,
+        "variant_label": _variant_label_for_report(variant),
+        "agent": str(variant.get("agent_id") or variant_id),
+        "agent_type": str(variant.get("agent_id") or variant_id),
+        "model": model_label,
+        "configured_model": configured_model,
+        "provider": provider_label,
+        "result": result,
+        "classification": result["classification"],
+        "differential": differential,
+        "target_run_id": target_run_id,
+        "trial_label": f"{result['passes']}/{result['total']} PASS",
+        "duration_label": _seconds_label(_mean([summary.get("duration_seconds") for summary in summaries])),
+        "otel_duration_label": _seconds_label(
+            metric_values["otel_duration_ms"] / 1000 if metric_values["otel_duration_ms"] is not None else None
+        ),
+        "input_tokens_label": _number_label(metric_values["input_tokens"]),
+        "output_tokens_label": _number_label(metric_values["output_tokens"]),
+        "cache_read_label": _number_label(metric_values["cache_read_tokens"]),
+        "cache_creation_label": _number_label(metric_values["cache_creation_tokens"]),
+        "total_tokens_label": _number_label(metric_values["total_tokens"]),
+        "cost_label": _cost_label(metric_values["cost_usd"]),
+        "model_calls_label": _number_label(model_calls),
+        "tool_calls_label": _number_label(tool_calls),
+        "tool_errors_label": _number_label(tool_errors),
+        "changed_files_label": _number_label(changed_files, decimals=1),
+        "evidence_label": _evidence_label(metric_values),
+        "evidence_note": "每次 trial 平均；OTel 缺失时保持未知",
+        "metrics": metric_values,
+        "run_count": len(runs),
+    }
+
+
+def _variant_label_for_report(variant: dict[str, Any]) -> str:
+    agent = variant.get("agent_id") or variant.get("id") or "Variant"
+    label = f"{agent} / {_configured_label(variant.get('model'))}"
+    config = variant.get("harness_config") or {}
+    if config.get("verification_gate") is True:
+        label += " · verification_gate=on"
+    elif config.get("verification_gate") is False:
+        label += " · verification_gate=off"
+    return label
+
+
+def _summary_metric_value(summary: dict[str, Any], run: dict[str, Any], key: str) -> Any:
+    if key == "agent":
+        return (summary.get("identity") or {}).get("agent") or UNKNOWN
+    if key == "agent_version":
+        return (summary.get("identity") or {}).get("agent_version") or UNKNOWN
+    if key == "model":
+        models = (summary.get("metrics") or {}).get("models") or []
+        return ", ".join(models) if models else (summary.get("identity") or {}).get("model") or UNKNOWN
+    if key == "provider":
+        return (summary.get("identity") or {}).get("provider") or UNKNOWN
+    if key == "outcome":
+        return summary.get("tests") or run.get("task_outcome") or UNKNOWN
+    if key == "duration_seconds":
+        return summary.get("duration_seconds")
+    if key == "changed_files":
+        return len(summary.get("changed_files") or [])
+    if key == "evidence":
+        metrics = summary.get("metrics") or {}
+        return _evidence_label(metrics)
+    return (summary.get("metrics") or {}).get(key)
+
+
+def _pair_display(value: Any, kind: str) -> str:
+    if value is None or value == UNKNOWN:
+        return "未知"
+    if kind == "seconds":
+        return _seconds_label(value)
+    if kind == "milliseconds":
+        return _seconds_label(float(value) / 1000)
+    if kind == "cost":
+        return _cost_label(value)
+    if kind == "number":
+        return _number_label(value)
+    return str(value)
+
+
+def _pair_delta(left: Any, right: Any, kind: str) -> str:
+    if left is None or right is None or left == UNKNOWN or right == UNKNOWN:
+        return "未知"
+    if kind in {"seconds", "milliseconds", "cost", "number"}:
+        try:
+            delta = float(left) - float(right)
+        except (TypeError, ValueError):
+            return "未知"
+        threshold = 0.00005 if kind == "cost" else 0.005
+        if abs(delta) < threshold:
+            return "相同"
+        if kind == "seconds":
+            return f"候选 {'+' if delta > 0 else ''}{delta:.2f} 秒"
+        if kind == "milliseconds":
+            return f"候选 {'+' if delta > 0 else ''}{delta / 1000:.2f} 秒"
+        if kind == "cost":
+            return f"候选 {'+' if delta > 0 else ''}${delta:.4f}"
+        return f"候选 {'+' if delta > 0 else ''}{delta:.0f}"
+    return "相同" if str(left) == str(right) else "不同"
+
+
+def _metric_comparison_rows(
+    candidate: dict[str, Any],
+    candidate_summary: dict[str, Any],
+    reference: dict[str, Any] | None,
+    reference_summary: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    fields = (
+        ("Agent 类型", "agent", "text"),
+        ("Agent 版本", "agent_version", "text"),
+        ("Model", "model", "text"),
+        ("Provider", "provider", "text"),
+        ("Verifier 结果", "outcome", "text"),
+        ("端到端时长", "duration_seconds", "seconds"),
+        ("OTel 活跃时长", "otel_duration_ms", "milliseconds"),
+        ("模型轮数", "model_calls", "number"),
+        ("工具调用", "tool_calls", "number"),
+        ("工具错误", "tool_errors", "number"),
+        ("输入 tokens", "input_tokens", "number"),
+        ("输出 tokens", "output_tokens", "number"),
+        ("缓存读取 tokens", "cache_read_tokens", "number"),
+        ("缓存创建 tokens", "cache_creation_tokens", "number"),
+        ("总 tokens", "total_tokens", "number"),
+        ("成本", "cost_usd", "cost"),
+        ("有效变更文件", "changed_files", "number"),
+        ("OTel 证据", "evidence", "text"),
+    )
+    rows: list[dict[str, str]] = []
+    for label, key, kind in fields:
+        left = _summary_metric_value(candidate_summary, candidate, key)
+        right = _summary_metric_value(reference_summary, reference, key) if reference and reference_summary else None
+        rows.append(
+            {
+                "label": label,
+                "candidate": _pair_display(left, kind),
+                "reference": _pair_display(right, kind),
+                "delta": _pair_delta(left, right, kind),
+            }
+        )
+    return rows
+
+
+def build_experiment_comparison(
+    repository: Repository,
+    runs: list[dict[str, Any]],
+    variants: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the decision tables behind the Experiment detail page."""
+    matrix = matrix_report(runs)
+    variant_by_id = {str(variant.get("id")): variant for variant in variants}
+    variant_order = [str(variant.get("id")) for variant in variants if variant.get("id")]
+    variant_order.extend(item for item in matrix["variant_ids"] if item not in variant_order)
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for run in runs:
+        grouped[(str(run["case_id"]), str(run["variant_id"]))].append(run)
+
+    rows: list[dict[str, Any]] = []
+    for (case_id, variant_id), group in sorted(
+        grouped.items(), key=lambda item: (item[0][0], variant_order.index(item[0][1]) if item[0][1] in variant_order else 999)
+    ):
+        cell = next(
+            (
+                row["cells"].get(variant_id)
+                for row in matrix["matrix_rows"]
+                if row["case_id"] == case_id
+            ),
+            {},
+        )
+        rows.append(
+            _comparison_row(
+                repository,
+                case_id,
+                variant_id,
+                group,
+                variant_by_id.get(variant_id, {"id": variant_id}),
+                differential=bool(cell.get("differential")),
+                target_run_id=cell.get("target_run_id"),
+            )
+        )
+
+    variant_rows: list[dict[str, Any]] = []
+    for variant_id in variant_order:
+        group = [run for run in runs if str(run.get("variant_id")) == variant_id]
+        if not group:
+            continue
+        row = _comparison_row(
+            repository,
+            "全部 Case",
+            variant_id,
+            group,
+            variant_by_id.get(variant_id, {"id": variant_id}),
+            differential=False,
+            target_run_id=None,
+        )
+        row["case_count"] = len({run.get("case_id") for run in group})
+        row["case_label"] = f"{row['case_count']} 个 Case"
+        variant_rows.append(row)
+
+    return {
+        "variant_rows": variant_rows,
+        "case_variant_rows": rows,
+        "cell_lookup": {f"{row['case_id']}::{row['variant_id']}": row for row in rows},
+        "notes": "数值默认按每次 trial 平均；成本只在 Agent/OTel 实际提供时显示；未知不等于 0。",
     }
 
 
@@ -418,6 +760,12 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
         "artifact_diff": artifact_diff(repository, candidate),
         "evidence_coverage": candidate.get("evidence_coverage", {}),
     }
+    result["metric_rows"] = _metric_comparison_rows(
+        candidate,
+        result["candidate_summary"],
+        None,
+        None,
+    )
     if not match or not match["sufficient"]:
         result.update(
             {
@@ -473,6 +821,12 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
             "first_meaningful_divergence": divergence,
             "note": "轨迹证据仅用于描述，不建立因果根因。",
         }
+    )
+    result["metric_rows"] = _metric_comparison_rows(
+        candidate,
+        result["candidate_summary"],
+        reference,
+        result["reference_summary"],
     )
     return result
 

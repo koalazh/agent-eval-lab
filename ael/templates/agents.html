@@ -5,7 +5,7 @@
   <div><span>可用 Agent</span><strong>{{ agents|selectattr("capabilities.available")|list|length }}</strong><small>可进入实验构建器</small></div>
   <div><span>不可用</span><strong>{{ agents|rejectattr("capabilities.available")|list|length }}</strong><small>明确禁用，不伪造组合</small></div>
   <div><span>支持模型切换</span><strong>{{ agents|selectattr("capabilities.supports_models")|list|length }}</strong><small>以当前 probe 为准</small></div>
-  <div><span>OTel</span><strong>{{ agents|selectattr("capabilities.supports_telemetry")|list|length }}</strong><small>其余使用 native evidence</small></div>
+  <div><span>OTel</span><strong>{{ agents|selectattr("capabilities.supports_telemetry")|list|length }}</strong><small>其余使用 native 证据</small></div>
 </section>
 <section class="agent-catalog-section"><div class="section-heading"><div><p class="eyebrow">能力矩阵</p><h2>Agent 能力卡片</h2></div><span class="muted">只读 probe · 不代表 Run 已通过</span></div>
   <div class="agent-catalog-grid">
@@ -13,7 +13,7 @@
     <article class="agent-catalog-card {% if not row.capabilities.available %}is-disabled{% endif %}">
       <div class="agent-catalog-head"><div><h3>{{ row.agent.display_name }}</h3><code>{{ row.agent.id }}</code></div><span class="pill {% if row.capabilities.available %}pill-success{% else %}pill-warning{% endif %}">{{ "可用" if row.capabilities.available else "不支持" }}</span></div>
       <p class="agent-version">{{ row.agent.detected_version }}</p>
-      <div class="capability-pills"><span class="capability-pill">模型：{{ "可切换" if row.capabilities.supports_models else "默认配置" }}</span><span class="capability-pill">观测：{{ "OTel" if row.capabilities.supports_telemetry else "native / usage" }}</span><span class="capability-pill">运行：{{ "controlled" if row.capabilities.supports_controlled else "native" }}</span></div>
+      <div class="capability-pills"><span class="capability-pill">模型：{{ "可切换" if row.capabilities.supports_models else "默认配置" }}</span><span class="capability-pill">观测：{{ "OTel" if row.capabilities.supports_telemetry else "native / usage（原生 / 用量）" }}</span><span class="capability-pill">运行：{{ "受控（controlled）" if row.capabilities.supports_controlled else "原生（native）" }}</span></div>
       <p class="agent-catalog-note">{{ row.capabilities.notes|join("；") }}</p>
     </article>
     {% endfor %}

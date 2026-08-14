@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 
 from .agents import builtin_real_drivers, probe_registry
 from .cases import ExperimentSpec, SuiteSpec, discover_case_paths, load_case
-from .comparison import compare_run_details
+from .comparison import build_experiment_comparison, compare_run_details
 from .diagnosis import create_follow_up_experiment, diagnose_run
 from .failures import promote_failure
 from .drivers.custom import CustomCLIDriver
@@ -193,6 +193,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             }
             for variant_id in matrix["variant_ids"]
         ]
+        comparison = build_experiment_comparison(repository, runs, variants)
         return render(
             request,
             "experiment.html",
@@ -203,6 +204,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             definition=definition,
             runs=runs,
             matrix=matrix,
+            comparison=comparison,
             differential_rows=[row for row in matrix["matrix_rows"] if row["differential"]],
         )
 

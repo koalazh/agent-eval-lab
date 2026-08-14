@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="setup-hero"><p class="eyebrow">配置 / Coding Case</p><h1>Coding Case</h1><p class="home-lede">Case revision 是不可变的任务真值（task truth）：同一个 Case 可以有多个 revision，但一次实验应明确选择其中一个。</p><a class="button" href="/experiments/new">选择 Case 创建实验</a></section>
+<section class="setup-hero"><p class="eyebrow">配置 / Coding Case</p><h1>Coding Case</h1><p class="home-lede">Case revision 是不可变的任务真值：同一个 Case 可以有多个 revision，但一次实验应明确选择其中一个。</p><a class="button" href="/experiments/new">选择 Case 创建实验</a></section>
 <section class="case-catalog-section"><div class="section-heading"><div><p class="eyebrow">不可变任务真值</p><h2>Case revision 目录</h2></div><span class="muted">{{ cases|length }} 个可选 revision</span></div>
   <div class="case-catalog-grid">
     {% for case in cases %}

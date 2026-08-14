@@ -28,6 +28,12 @@ _KIND_LABELS = {
 _SAFE_ATTRIBUTE_KEYS = (
     "event.sequence",
     "event.name",
+    "trace_id",
+    "span_id",
+    "parent_span_id",
+    "span.kind",
+    "span.status",
+    "status.message",
     "tool_name",
     "tool_source",
     "tool_use_id",
@@ -260,6 +266,29 @@ def _status(event: dict[str, Any]) -> tuple[str, str]:
     return ("已返回" if kind == "tool_result" else "已观测"), "observed"
 
 
+def _span_context(event: dict[str, Any]) -> dict[str, str | int | None]:
+    attrs = _attributes(event)
+    record = _record(event)
+    nested = record.get("spanContext") if isinstance(record.get("spanContext"), dict) else {}
+
+    def first(*keys: str) -> Any:
+        for source in (attrs, record, nested, event):
+            for key in keys:
+                value = source.get(key)
+                if value not in (None, ""):
+                    return value
+        return None
+
+    span_events = record.get("events")
+    return {
+        "trace_id": first("trace_id", "traceId"),
+        "span_id": first("span_id", "spanId"),
+        "parent_span_id": first("parent_span_id", "parentSpanId"),
+        "span_kind": first("span.kind", "spanKind", "kind") if _signal(event) == "traces" else None,
+        "span_event_count": len(span_events) if isinstance(span_events, list) else None,
+    }
+
+
 def _safe_attributes(event: dict[str, Any]) -> list[dict[str, str]]:
     attrs = _attributes(event)
     result: list[dict[str, str]] = []
@@ -270,6 +299,11 @@ def _safe_attributes(event: dict[str, Any]) -> list[dict[str, str]]:
     record = _record(event)
     if record.get("status") and isinstance(record["status"], dict):
         result.append({"key": "span.status", "value": _format_value(record["status"].get("code", "unknown"))})
+    context = _span_context(event)
+    for key in ("trace_id", "span_id", "parent_span_id", "span_kind"):
+        value = context.get(key)
+        if value not in (None, "") and not any(item["key"] == key for item in result):
+            result.append({"key": key, "value": _format_value(value)})
     return result
 
 
@@ -363,6 +397,7 @@ def build_trace_view(
                 "attributes": _safe_attributes(event),
                 "sequence": _attributes(event).get("event.sequence"),
                 "is_span": signal == "traces",
+                **_span_context(event),
             }
         )
     signal_counts = Counter(_signal(event) for event in otel_events)
@@ -399,19 +434,6 @@ def _metric_value(event: dict[str, Any]) -> float | None:
     return None
 
 
-def _sum_metric(otel_events: list[dict[str, Any]], name_part: str, attr_key: str, attr_value: str) -> float:
-    total = 0.0
-    for event in otel_events:
-        if name_part not in _event_name(event):
-            continue
-        if str(_attributes(event).get(attr_key)) != attr_value:
-            continue
-        value = _metric_value(event)
-        if value is not None:
-            total += value
-    return total
-
-
 def _number_label(value: Any, fallback: str = "未知") -> str:
     if value is None:
         return fallback
@@ -431,23 +453,38 @@ def build_telemetry_overview(
     otel = telemetry.get("otel") if isinstance(telemetry.get("otel"), dict) else telemetry
     input_tokens = otel.get("input_tokens")
     output_tokens = otel.get("output_tokens")
-    cache_read = _sum_metric(otel_events, "token.usage", "type", "cacheRead")
-    cache_creation = _sum_metric(otel_events, "token.usage", "type", "cacheCreation")
+    total_tokens = None
+    input_number = _number(input_tokens)
+    output_number = _number(output_tokens)
+    if input_number is not None and output_number is not None:
+        total_tokens = input_number + output_number
+    cache_read = _metric_total_or_none(otel_events, "token.usage", "type", "cacheRead")
+    cache_creation = _metric_total_or_none(otel_events, "token.usage", "type", "cacheCreation")
     cost = sum(
         _number(_attributes(event).get("cost_usd")) or 0
         for event in otel_events
         if "cost.usage" in _event_name(event) or _attributes(event).get("cost_usd") is not None
     )
     models = sorted({str(_attributes(event).get("model")) for event in otel_events if _attributes(event).get("model")})
+    tool_results = [event for event in otel_events if str(event.get("kind") or "") == "tool_result"]
+    tool_errors = (
+        sum(1 for event in tool_results if str(_attributes(event).get("success")).lower() == "false")
+        if tool_results
+        else None
+    )
     signal_counts = trace_view.get("signal_counts", {})
     cards = [
-        {"label": "Model 调用", "value": _number_label(otel.get("model_calls")), "detail": "按 api_request 归纳"},
-        {"label": "工具调用", "value": _number_label(otel.get("tool_calls")), "detail": "按 tool_decision 归纳"},
-        {"label": "输入 tokens", "value": _number_label(input_tokens), "detail": "OTel token usage"},
-        {"label": "输出 tokens", "value": _number_label(output_tokens), "detail": "OTel token usage"},
-        {"label": "缓存读取", "value": _number_label(cache_read, "0"), "detail": "cacheRead metric"},
+        {"label": "Model 调用", "value": _number_label(otel.get("model_calls")), "detail": "由 api_request 事件归纳"},
+        {"label": "工具调用", "value": _number_label(otel.get("tool_calls")), "detail": "由 tool_decision 事件归纳"},
+        {"label": "输入 tokens", "value": _number_label(input_tokens), "detail": "OTel token 用量"},
+        {"label": "输出 tokens", "value": _number_label(output_tokens), "detail": "OTel token 用量"},
+        {"label": "总 tokens", "value": _number_label(total_tokens), "detail": "输入 + 输出，不含 cache"},
+        {"label": "缓存读取", "value": _number_label(cache_read), "detail": "cacheRead metric"},
+        {"label": "缓存创建", "value": _number_label(cache_creation), "detail": "cacheCreation metric"},
+        {"label": "工具错误", "value": _number_label(tool_errors), "detail": "由 tool_result 失败状态归纳"},
         {"label": "成本", "value": f"{cost:.4f} USD" if cost else "未知", "detail": "仅在 Agent 提供 cost 时显示"},
-        {"label": "活跃时长", "value": _format_duration(otel.get("duration_ms")), "detail": "OTel duration"},
+        {"label": "活跃时长", "value": _format_duration(otel.get("duration_ms")), "detail": "OTel 耗时"},
+        {"label": "Model", "value": ", ".join(models) or "未知", "detail": "来自 OTel 属性"},
         {"label": "关联事件", "value": f"{len(otel_events)} 条", "detail": "按 ael.run.id 关联"},
     ]
     signals = [
@@ -459,9 +496,130 @@ def build_telemetry_overview(
         "cards": cards,
         "signals": signals,
         "models": models,
-        "cache_creation": _number_label(cache_creation, "0"),
+        "cache_creation": _number_label(cache_creation),
         "evidence": otel.get("evidence") or "insufficient evidence",
         "record_batches": otel.get("records") or {},
+    }
+
+
+def _metric_total_or_none(
+    otel_events: list[dict[str, Any]],
+    name_part: str,
+    attr_key: str,
+    attr_value: str,
+) -> float | None:
+    values: list[float] = []
+    for event in otel_events:
+        if name_part not in _event_name(event):
+            continue
+        if str(_attributes(event).get(attr_key)) != attr_value:
+            continue
+        value = _metric_value(event)
+        if value is not None:
+            values.append(value)
+    return sum(values) if values else None
+
+
+def _metric_count(value: Any) -> int | None:
+    number = _number(value)
+    return int(number) if number is not None else None
+
+
+def build_metric_snapshot(
+    telemetry: dict[str, Any],
+    otel_events: list[dict[str, Any]],
+    native_events: list[dict[str, Any]],
+    trace_view: dict[str, Any],
+) -> dict[str, Any]:
+    """Return comparable, evidence-backed numbers for one Run.
+
+    OTel summary values are preferred when present. Native usage/events are only
+    used as a fallback, and missing values remain ``None`` so the UI can render
+    them as unknown instead of implying a measurement that was not observed.
+    """
+    otel = telemetry.get("otel") if isinstance(telemetry.get("otel"), dict) else {}
+    native_usage = telemetry.get("native_usage") if isinstance(telemetry.get("native_usage"), dict) else {}
+    source_events = otel_events or native_events
+
+    input_tokens = otel.get("input_tokens")
+    if input_tokens is None:
+        input_tokens = native_usage.get("input_tokens")
+    output_tokens = otel.get("output_tokens")
+    if output_tokens is None:
+        output_tokens = native_usage.get("output_tokens")
+
+    cache_read = _metric_total_or_none(otel_events, "token.usage", "type", "cacheRead")
+    if cache_read is None:
+        cache_read = native_usage.get("cache_read_input_tokens")
+    cache_creation = _metric_total_or_none(otel_events, "token.usage", "type", "cacheCreation")
+    if cache_creation is None:
+        cache_creation = native_usage.get("cache_creation_input_tokens")
+
+    cost_values = [
+        value
+        for value in (_number(_attributes(event).get("cost_usd")) for event in otel_events)
+        if value is not None
+    ]
+    cost_usd = sum(cost_values) if cost_values else None
+
+    model_calls = _metric_count(otel.get("model_calls"))
+    if model_calls is None and otel_events:
+        observed_model_events = [event for event in otel_events if _event_name(event) == "api_request"]
+        model_calls = len(observed_model_events) if observed_model_events else None
+    if model_calls is None and native_events:
+        observed_model_events = [
+            event
+            for event in native_events
+            if str(event.get("kind") or "") == "message" and event.get("name") == "api_request"
+        ]
+        model_calls = len(observed_model_events) if observed_model_events else None
+
+    tool_calls = _metric_count(otel.get("tool_calls"))
+    if tool_calls is None and source_events:
+        observed_tool_events = [event for event in source_events if str(event.get("kind") or "") == "tool_call"]
+        tool_calls = len(observed_tool_events) if observed_tool_events else None
+
+    tool_result_events = [event for event in source_events if str(event.get("kind") or "") == "tool_result"]
+    tool_errors = (
+        sum(1 for event in tool_result_events if str(_attributes(event).get("success")).lower() == "false")
+        if tool_result_events
+        else None
+    )
+    models = sorted(
+        {
+            str(_attributes(event).get("model"))
+            for event in otel_events
+            if _attributes(event).get("model")
+        }
+    )
+    if not models and otel.get("model"):
+        models = [str(otel["model"])]
+
+    total_tokens = None
+    input_number = _number(input_tokens)
+    output_number = _number(output_tokens)
+    if input_number is not None and output_number is not None:
+        total_tokens = input_number + output_number
+
+    signal_counts = trace_view.get("signal_counts", {})
+    return {
+        "model_calls": model_calls,
+        "tool_calls": tool_calls,
+        "tool_errors": tool_errors if source_events else None,
+        "input_tokens": _number(input_tokens),
+        "output_tokens": _number(output_tokens),
+        "cache_read_tokens": _number(cache_read),
+        "cache_creation_tokens": _number(cache_creation),
+        "total_tokens": total_tokens,
+        "cost_usd": cost_usd,
+        "otel_duration_ms": _number(otel.get("duration_ms")),
+        "models": models,
+        "otel_events": len(otel_events) if otel_events else None,
+        "otel_logs": signal_counts.get("logs", 0) if otel_events else None,
+        "otel_metrics": signal_counts.get("metrics", 0) if otel_events else None,
+        "otel_spans": signal_counts.get("traces", 0) if otel_events else None,
+        "native_events": trace_view.get("native_event_count") if native_events else None,
+        "evidence": otel.get("evidence") if otel_events else None,
     }
 
 

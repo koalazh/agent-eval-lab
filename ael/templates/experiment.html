@@ -36,12 +36,14 @@
         <td><strong>{{ row.case_id }}</strong>{% if row.differential %}<br><span class="differential-tag">行为不同</span>{% endif %}</td>
         {% for column in matrix.columns %}
           {% set cell = row.cells.get(column.id) %}
+          {% set metrics = comparison.cell_lookup.get(row.case_id ~ "::" ~ column.id) %}
         <td>
           {% if cell and cell.run_ids %}
             {% set target = "/runs/" ~ cell.target_run_id ~ ("/explorer" if cell.fails else "") %}
             <a class="matrix-cell matrix-cell-product {{ cell.classification }} {% if cell.differential %}is-differential{% endif %}" href="{{ target }}">
               <div class="matrix-cell-main"><strong>{{ cell.display }}</strong><span class="matrix-arrow">↗</span></div>
               <small class="{{ cell.classification }}">{{ {"STABLE_PASS": "稳定通过", "STABLE_FAIL": "稳定失败", "FLAKY": "不稳定", "ERROR": "运行错误", "UNKNOWN": "未知"}.get(cell.classification, cell.classification) }}</small>
+              {% if metrics %}<span class="matrix-micro">{{ metrics.duration_label }} · {{ metrics.total_tokens_label }} 总 tokens · 工具调用 {{ metrics.tool_calls_label }}</span>{% endif %}
               {% if cell.differential %}<em>差异 · {{ "打开 Failure Explorer" if cell.fails else "查看 Run" }}</em>{% endif %}
             </a>
           {% else %}<span class="muted">等待 Run</span>{% endif %}
@@ -52,6 +54,79 @@
     </table>
   </div>
   {% else %}<div class="empty-state"><strong>{% if experiment.status in ["PENDING", "RUNNING"] %}等待真实 Run 完成{% else %}没有 Run 结果{% endif %}</strong><p>AEL 会在每个 Case × Variant × Trial 完成后更新矩阵。</p></div>{% endif %}
+</section>
+
+<section class="comparison-section">
+  <div class="section-heading">
+    <div><p class="eyebrow">可比指标</p><h2>Variant 总览</h2></div>
+    <span class="muted">同一 Variant 跨 Case 的每次 trial 平均</span>
+  </div>
+  <p class="section-lede">这里回答“哪个 Agent / Model 的行为成本和稳定性不同”。Verifier 是任务真值；成本、token、tool 和 OTel 数值只来自实际 Run evidence，缺失保持未知。</p>
+  {% if comparison.variant_rows %}
+  <div class="comparison-table-wrap">
+    <table class="comparison-table comparison-overview-table">
+      <thead><tr><th>Agent 类型 / Variant</th><th>Model</th><th>Provider</th><th>Case / Run</th><th>通过率</th><th>平均耗时</th><th>平均总 tokens</th><th>平均成本</th><th>平均工具调用</th><th>模型轮数</th><th>工具错误</th><th>平均变更文件</th><th>OTel 证据</th></tr></thead>
+      <tbody>
+      {% for row in comparison.variant_rows %}
+      <tr class="comparison-row-{{ row.classification|lower }}">
+        <td><strong>{{ row.agent_type }}</strong><small>{{ row.variant_label }}</small></td>
+        <td><strong>{{ row.model }}</strong>{% if row.configured_model != row.model %}<small>配置：{{ row.configured_model }}</small>{% endif %}</td>
+        <td>{{ row.provider }}</td>
+        <td>{{ row.case_label }} / {{ row.run_count }} 次</td>
+        <td><strong>{{ row.trial_label }}</strong><small>{{ {"STABLE_PASS": "稳定通过", "STABLE_FAIL": "稳定失败", "FLAKY": "不稳定", "ERROR": "运行错误", "UNKNOWN": "未知"}.get(row.classification, row.classification) }}</small></td>
+        <td>{{ row.duration_label }}</td>
+        <td>{{ row.total_tokens_label }}</td>
+        <td>{{ row.cost_label }}</td>
+        <td>{{ row.tool_calls_label }}</td>
+        <td>{{ row.model_calls_label }}</td>
+        <td>{{ row.tool_errors_label }}</td>
+        <td>{{ row.changed_files_label }}</td>
+        <td><span class="comparison-evidence">{{ row.evidence_label }}</span></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<div class="empty-state">等待真实 Run 产生可比较的指标。</div>{% endif %}
+  <p class="comparison-note">{{ comparison.notes }}</p>
+</section>
+
+<section class="comparison-section case-comparison-section">
+  <div class="section-heading">
+    <div><p class="eyebrow">差异定位</p><h2>Case × Variant 指标明细</h2></div>
+    <span class="muted">先按 Case 看行为，再点击矩阵或 Run 深挖证据</span>
+  </div>
+  {% if comparison.case_variant_rows %}
+  <div class="comparison-table-wrap">
+    <table class="comparison-table comparison-detail-table">
+      <thead><tr><th>Case</th><th>Agent 类型</th><th>Model</th><th>Provider</th><th>结果</th><th>Run 时长</th><th>OTel 时长</th><th>输入 tokens</th><th>输出 tokens</th><th>缓存读取 tokens</th><th>缓存创建 tokens</th><th>总 tokens</th><th>成本</th><th>工具调用</th><th>模型轮数</th><th>工具错误</th><th>变更文件</th><th>OTel / native 证据</th></tr></thead>
+      <tbody>
+      {% for row in comparison.case_variant_rows %}
+      <tr class="comparison-row-{{ row.classification|lower }} {% if row.differential %}comparison-row-differential{% endif %}">
+        <td>{% if row.target_run_id %}<a class="comparison-case-link" href="/runs/{{ row.target_run_id }}{{ "/explorer" if row.result.fails else "" }}"><strong>{{ row.case_id }}</strong></a>{% else %}<strong>{{ row.case_id }}</strong>{% endif %}{% if row.differential %}<small class="differential-tag">行为不同</small>{% endif %}</td>
+        <td><strong>{{ row.agent_type }}</strong><small>{{ row.variant_label }}</small></td>
+        <td><strong>{{ row.model }}</strong>{% if row.configured_model != row.model %}<small>配置：{{ row.configured_model }}</small>{% endif %}</td>
+        <td>{{ row.provider }}</td>
+        <td><strong>{{ row.trial_label }}</strong><small>{{ {"STABLE_PASS": "稳定通过", "STABLE_FAIL": "稳定失败", "FLAKY": "不稳定", "ERROR": "运行错误", "UNKNOWN": "未知"}.get(row.classification, row.classification) }}</small></td>
+        <td>{{ row.duration_label }}</td>
+        <td>{{ row.otel_duration_label }}</td>
+        <td>{{ row.input_tokens_label }}</td>
+        <td>{{ row.output_tokens_label }}</td>
+        <td>{{ row.cache_read_label }}</td>
+        <td>{{ row.cache_creation_label }}</td>
+        <td><strong>{{ row.total_tokens_label }}</strong></td>
+        <td>{{ row.cost_label }}</td>
+        <td>{{ row.tool_calls_label }}</td>
+        <td>{{ row.model_calls_label }}</td>
+        <td>{{ row.tool_errors_label }}</td>
+        <td>{{ row.changed_files_label }}</td>
+        <td><span class="comparison-evidence">{{ row.evidence_label }}</span></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<div class="empty-state">等待真实 Run 产生 Case × Variant 指标明细。</div>{% endif %}
 </section>
 
 <section class="run-detail-section">

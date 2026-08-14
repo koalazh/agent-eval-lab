@@ -55,6 +55,8 @@ Model/Provider（或保留 `默认配置`），设置试验次数/并发数，�
 `运行实验`。实验详情页的主体是 Case × Variant 矩阵；每个单元格都链接到
 对应真实 Run。不可用的 Agent 会保持“已禁用”，不会被当作验收证据。
 
+实验详情页现在提供两层对比：上层 Case × Variant 矩阵负责快速发现稳定通过、稳定失败、不稳定和差异；下层 `Variant 总览` 与 `Case × Variant 指标明细` 用表格逐项展示 Agent 类型、Model、Provider、通过率、端到端耗时、OTel 耗时、Input/Output/Cache/Total tokens、成本、工具调用、模型轮数、工具错误、变更文件和 OTel signal 证据。表格中的数值默认是每次 trial 平均，未知不会用 0 代替；点击矩阵单元格仍可进入具体 Run 或 Failure Explorer。
+
 仓库中不会保存凭据。缺失 CLI、provider（提供方）不可用、认证错误或速率限制会记录为基础设施/进程证据，不会被提升为 Agent 任务失败。
 
 阶段 A 的真实验收记录（2026-08-14）：实验 `golden-phase-a-final-75ae939d` 从这个 Web
@@ -99,12 +101,12 @@ Run 页面会把这些证据分成几个可互相核对的视角：
 
 - `AEL trajectory`：只按真实观察到的 READ / MUTATE / TOOL / VERIFY / COMPLETE 强锚点归纳行为；不把
   hidden reasoning 当成事实；
-- `Telemetry` 摘要：显示 Model 调用、工具调用、输入/输出 tokens、缓存、成本、活跃时长、Collector
+- `Telemetry` 摘要：显示 Model 调用、工具调用、输入/输出/总 tokens、缓存、成本、工具错误、活跃时长、Model、Collector
   records 和 signal 分布；
 - `OTel trace / event` 瀑布：按时间偏移、耗时、operation、状态和安全属性展开每条 log、metric 或真实
   span；点击事件可以查看属性，原始 JSONL 只在页面底部按需展开；
 - `Failure Explorer`：把 Candidate 与 PASS reference 的强行为组局部对齐，并单独显示 Verifier、
-  Workspace、native 和 OTel 的证据覆盖。
+  Workspace、native 和 OTel 的证据覆盖；顶部另有逐项指标表，直接比较时延、token、成本、工具调用和证据覆盖。
 
 AEL 遵循 OpenTelemetry 的 signal 边界：log、metric 和 trace span 不互相冒充。当前 Claude Code
 真实 Run 已经完成 OTLP → Collector → 持久化 → `ael.run.id` 关联，并能看到真实 logs/metrics；如果

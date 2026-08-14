@@ -18,7 +18,7 @@
     .metric strong { display: block; font-size: 24px; }
     table { width: 100%; border-collapse: collapse; background: white; }
     th, td { text-align: left; padding: 11px; border-bottom: 1px solid #e6eaee; vertical-align: top; }
-    th { color: #52616d; font-size: 13px; text-transform: uppercase; letter-spacing: .03em; }
+    th { color: #52616d; font-size: 13px; text-transform: none; letter-spacing: .03em; }
     code, pre, input, textarea, select, button { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #10151a; color: #d5f2df; padding: 14px; border-radius: 8px; max-height: 520px; overflow: auto; }
     input[type=text], input[type=number], textarea, select { border: 1px solid #cbd5dc; border-radius: 7px; padding: 8px; width: 100%; box-sizing: border-box; background: white; }
@@ -133,7 +133,7 @@
     .trace-time-axis span:last-child { transform: translateX(-100%); }
     .trace-waterfall { overflow: hidden; border: 1px solid #dfe6eb; border-radius: 10px; background: #fbfcfd; }
     .trace-axis, .trace-row summary { display: grid; grid-template-columns: 32px 76px minmax(110px, 22%) minmax(300px, 1fr) 78px 74px; align-items: center; gap: 10px; }
-    .trace-axis { padding: 9px 12px; color: #778590; border-bottom: 1px solid #e5ebef; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .trace-axis { padding: 9px 12px; color: #778590; border-bottom: 1px solid #e5ebef; font-size: 11px; font-weight: 700; text-transform: none; letter-spacing: 0; }
     .trace-axis span:nth-child(2) { grid-column: 4; }
     .trace-axis span:nth-child(3) { grid-column: 6; }
     .trace-row { margin: 0; border-bottom: 1px solid #edf1f4; background: #fff; }
@@ -284,8 +284,27 @@
     .matrix-cell-main { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .matrix-arrow { color: #8da1b1; }
     .matrix-cell-product > small { display: block; margin-top: 5px; text-transform: none; letter-spacing: 0; }
+    .matrix-micro { display: block; margin-top: 7px; color: #71808b; font-size: 10px; line-height: 1.35; }
     .matrix-cell-product > em { display: block; margin-top: 5px; color: #6a3db8; font-size: 10px; font-style: normal; }
     .matrix-cell-product.is-differential { border-color: #cdbbe8; background: #fbf9ff; }
+    .comparison-section { padding: 24px; }
+    .comparison-table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid #dfe5ea; border-radius: 10px; }
+    .comparison-table { min-width: 1380px; background: #fff; }
+    .comparison-table th { position: sticky; top: 0; z-index: 2; padding: 10px 12px; color: #53636e; background: #f4f7f9; font-size: 11px; text-transform: none; white-space: nowrap; }
+    .comparison-table td { min-width: 92px; padding: 12px; color: #263541; font-size: 12px; white-space: nowrap; }
+    .comparison-table td:first-child, .comparison-table th:first-child { position: sticky; left: 0; z-index: 1; min-width: 178px; background: #fff; box-shadow: 6px 0 10px #17212b0b; }
+    .comparison-table th:first-child { z-index: 3; background: #f4f7f9; }
+    .comparison-table td strong, .comparison-table td small { display: block; }
+    .comparison-table td small { margin-top: 4px; color: #788691; font-size: 10px; white-space: normal; }
+    .comparison-table tbody tr:hover td { background: #f8fbfd; }
+    .comparison-table tbody tr:hover td:first-child { background: #f8fbfd; }
+    .comparison-table .comparison-row-differential td { background: #fcf9ff; }
+    .comparison-table .comparison-row-differential td:first-child { background: #fcf9ff; box-shadow: inset 3px 0 #8154c4, 6px 0 10px #17212b0b; }
+    .comparison-case-link { color: inherit; text-decoration: none; }
+    .comparison-case-link:hover { color: #246bce; }
+    .comparison-evidence { display: block; max-width: 190px; color: #5d6e7a; font-size: 10px; line-height: 1.35; white-space: normal; }
+    .comparison-note { margin: 12px 0 0; color: #75838e; font-size: 12px; }
+    .case-comparison-section { border-color: #d5c5f3; }
     .run-detail-section summary { display: flex; justify-content: space-between; gap: 12px; cursor: pointer; }
     .difference-banner { display: flex; align-items: center; gap: 12px; padding: 15px; border: 1px solid #dfc9ec; border-radius: 10px; background: #fbf7ff; }
     .difference-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; color: white; background: #6a3db8; font-weight: 800; }
@@ -313,6 +332,22 @@
     .mini-trace-row { display: grid; grid-template-columns: 58px auto minmax(0, 1fr) 52px; gap: 6px; align-items: center; padding: 9px; border-bottom: 1px solid #edf1f4; font-size: 11px; }
     .mini-trace-row:last-child { border-bottom: 0; }.mini-trace-row > span:first-child, .mini-trace-row em { color: #75838e; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }.mini-trace-row small { grid-column: 3 / 5; overflow: hidden; color: #75838e; text-overflow: ellipsis; white-space: nowrap; }.mini-trace-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.mini-more { margin-bottom: 0; font-size: 11px; }
     .explorer-run-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }.explorer-run-title h2 { margin-bottom: 0; }.explorer-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 16px 0; }.explorer-metrics div { padding: 10px; border-radius: 8px; background: #f7f9fb; }.explorer-metrics span, .explorer-metrics strong { display: block; }.explorer-metrics span { color: #74818b; font-size: 11px; }.explorer-metrics strong { margin-top: 5px; font-size: 14px; overflow-wrap: anywhere; }.explorer-evidence-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.explorer-evidence-panes { align-items: start; }.evidence-mini-list { display: grid; gap: 8px; }.evidence-mini { padding: 11px 12px; border: 1px solid #e0e7ec; border-radius: 8px; background: #f8fafc; }.evidence-mini.evidence-observed { border-left: 3px solid #3aa676; }.evidence-mini.evidence-unknown { border-left: 3px solid #c7a34a; background: #fffcf3; }.evidence-mini > strong { display: block; margin: 5px 0 3px; font-size: 15px; }.evidence-mini p { margin: 0; color: #64737f; font-size: 11px; line-height: 1.45; }.hypothesis-card { margin: 12px 0; padding: 16px; border-left: 4px solid #6a3db8; border-radius: 8px; background: #fbf9ff; }.hypothesis-card strong { display: block; margin: 6px 0; }
+    .metric-compare-section { padding: 24px; border-color: #cfe0f0; }
+    .metric-compare-table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid #dfe5ea; border-radius: 10px; }
+    .metric-compare-table { min-width: 720px; }
+    .metric-compare-table th, .metric-compare-table td { padding: 11px 13px; font-size: 12px; }
+    .metric-compare-table thead th { color: #53636e; background: #f4f7f9; text-transform: none; white-space: nowrap; }
+    .metric-compare-table tbody th { width: 25%; color: #52616d; font-weight: 700; background: #fbfcfd; }
+    .metric-compare-table tbody td:nth-child(2) { color: #9c2c24; font-weight: 650; }
+    .metric-compare-table tbody td:nth-child(3) { color: #087443; font-weight: 650; }
+    .metric-compare-table .metric-delta { color: #5f6f7a; font-weight: 650; }
+    .follow-up-compare-section { padding: 24px; border-color: #cfe0f0; }
+    .follow-up-table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid #dfe5ea; border-radius: 10px; }
+    .follow-up-table { min-width: 680px; }
+    .follow-up-table th, .follow-up-table td { padding: 11px 13px; font-size: 12px; }
+    .follow-up-table thead th { color: #53636e; background: #f4f7f9; }
+    .follow-up-table tbody th { width: 24%; color: #52616d; background: #fbfcfd; }
+    .follow-up-table tbody td:last-child { color: #087443; font-weight: 750; }
     @media (max-width: 900px) {
       .run-scoreboard, .telemetry-cards, .home-stats, .setup-summary, .failure-summary, .failure-detail-summary, .experiment-scoreboard, .builder-strategy-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .home-hero, .builder-hero, .setup-hero, .failure-hero, .failure-detail-hero { display: block; }

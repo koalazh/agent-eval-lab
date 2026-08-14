@@ -37,7 +37,7 @@
           <span class="trajectory-status status-{{ step.status_class }}">{{ step.status }}</span>
         </div>
         <p>{{ step.detail|replace("task truth", "任务真值") }}</p>
-        <div class="trajectory-meta"><span>{{ step.source }}</span><span>{{ step.event_count }} 个证据事件</span><span>{{ step.duration_label }}</span><span>sequence {{ step.sequence }}</span></div>
+        <div class="trajectory-meta"><span>{{ step.source }}</span><span>{{ step.event_count }} 个证据事件</span><span>{{ step.duration_label }}</span><span>序号 {{ step.sequence }}</span></div>
       </div>
     </div>
     {% else %}
@@ -117,7 +117,7 @@
   <div class="trace-legend"><span><i class="signal-dot signal-logs"></i> logs</span><span><i class="signal-dot signal-metrics"></i> metrics</span><span><i class="signal-dot signal-traces"></i> traces / span</span><span><i class="signal-dot signal-native"></i> native</span><span class="muted">点击任一行展开属性</span></div>
   <div class="trace-time-axis">{% for tick in trace_view.axis_ticks %}<span style="left: {{ tick.left }}%;">{{ tick.label }}</span>{% endfor %}</div>
   <div class="trace-waterfall">
-    <div class="trace-axis"><span>时间</span><span>事件 / operation</span><span>耗时</span></div>
+    <div class="trace-axis"><span>时间</span><span>事件 / 操作</span><span>耗时</span></div>
     {% for event in trace_view.events %}
     <details class="trace-row trace-signal-{{ event.signal }}">
       <summary>
@@ -129,7 +129,7 @@
         <span class="trace-duration">{{ event.duration_label }}</span>
       </summary>
       <div class="trace-detail">
-        <div class="trace-detail-summary"><div><span class="muted">可观察说明</span><p>{{ event.detail }}</p></div><div><span class="muted">事件类型 event kind</span><p><code>{{ event.kind }}</code> · {% if event.is_span %}真实 trace span{% else %}event / sample（事件 / 样本）{% endif %}</p></div></div>
+        <div class="trace-detail-summary"><div><span class="muted">可观察说明</span><p>{{ event.detail }}</p></div><div><span class="muted">事件类型 event kind</span><p><code>{{ event.kind }}</code> · {% if event.is_span %}真实 trace span{% else %}event / sample（事件 / 样本）{% endif %}</p>{% if event.is_span %}<p><span class="muted">Span 上下文</span><br><code>trace {{ event.trace_id or "未知" }}</code><br><code>span {{ event.span_id or "未知" }}</code><br><code>parent {{ event.parent_span_id or "无" }}</code>{% if event.span_kind %}<br><code>kind {{ event.span_kind }}</code>{% endif %}{% if event.span_event_count is not none %}<br><code>{{ event.span_event_count }} 个 span event</code>{% endif %}</p>{% endif %}</div></div>
         {% if event.attributes %}
         <table class="attribute-table"><thead><tr><th>属性</th><th>值</th></tr></thead><tbody>{% for attribute in event.attributes %}<tr><td><code>{{ attribute.key }}</code></td><td>{{ attribute.value }}</td></tr>{% endfor %}</tbody></table>
         {% else %}<p class="muted">没有可安全展示的结构化属性；原始证据仍可在页面底部展开。</p>{% endif %}

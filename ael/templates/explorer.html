@@ -12,15 +12,34 @@
     {% if summary %}
     <div class="explorer-run-title"><h2 class="{{ summary.outcome }}">{{ summary.outcome }}</h2><span class="muted">Verifier：{{ summary.tests }}</span></div>
     <div class="explorer-metrics">
-      <div><span>时长</span><strong>{{ summary.duration_label }}</strong></div>
-      <div><span>工具组</span><strong>{{ summary.tool_calls }}</strong></div>
-      <div><span>变更</span><strong>{{ summary.changed_files|length }} 文件</strong></div>
-      <div><span>tokens</span><strong>{{ summary.tokens.input or "未知" }} / {{ summary.tokens.output or "未知" }}</strong></div>
+      <div><span>Agent 类型</span><strong>{{ summary.identity.agent or "未知" }}</strong></div>
+      <div><span>Model</span><strong>{{ summary.metrics.models|join(", ") or summary.identity.model or "未知" }}</strong></div>
+      <div><span>端到端时长</span><strong>{{ summary.duration_label }}</strong></div>
+      <div><span>模型轮数</span><strong>{{ summary.metric_labels.model_calls }}</strong></div>
+      <div><span>工具调用</span><strong>{{ summary.metric_labels.tool_calls }}</strong></div>
+      <div><span>总 tokens</span><strong>{{ summary.metric_labels.total_tokens }}</strong></div>
+      <div><span>成本</span><strong>{{ summary.metric_labels.cost_usd }}</strong></div>
+      <div><span>有效变更</span><strong>{{ summary.changed_files|length }} 文件</strong></div>
     </div>
     {% if summary.otel and summary.otel.events %}<p class="pill">OTel {{ summary.otel.events }} 条关联记录 · {{ "真实 OTLP" if summary.otel.evidence == "real OTLP records correlated by ael.run.id" else "证据不足" }}</p>{% endif %}
     {% else %}<p class="unknown">没有合适的 PASS reference。</p>{% endif %}
   </article>
   {% endfor %}
+</section>
+
+<section class="metric-compare-section">
+  <div class="section-heading"><div><p class="eyebrow">逐项证据对照</p><h2>关键指标对比</h2></div><span class="pill neutral">候选 − PASS 参考</span></div>
+  <p class="section-lede">这张表把“行为差异”和“资源差异”放在同一个阅读面内：数字来自同一组真实 Run evidence，无法观测的字段显示未知，不用 0 代替。</p>
+  <div class="metric-compare-table-wrap">
+    <table class="metric-compare-table">
+      <thead><tr><th>指标</th><th>候选 Candidate</th><th>PASS 参考</th><th>差异 / 解释</th></tr></thead>
+      <tbody>
+      {% for row in explorer.metric_rows %}
+      <tr><th>{{ row.label }}</th><td>{{ row.candidate }}</td><td>{{ row.reference }}</td><td class="metric-delta">{{ row.delta }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </section>
 
 <section class="key-difference-section">
