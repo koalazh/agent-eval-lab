@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ael.comparison import compare_experiments, compare_run_details
+from ael.comparison import compare_experiments, compare_run_details, first_meaningful_divergence
 from ael.runner import Runner
 from tests.test_m0_core import make_experiment
 
@@ -18,7 +18,8 @@ async def test_failure_explorer_matches_same_revision_pass_and_localizes_evidenc
     assert details["matched_reference"]["outcome"] == "PASS"
     assert details["variable_scope"]["same"]
     assert details["artifact_diff"]["diff"]
-    assert details["first_meaningful_divergence"]["status"] == "NO_CLEAR_DIVERGENCE"
+    assert details["first_meaningful_divergence"]["reason"] == "verifier outcome differs"
+    assert details["first_meaningful_divergence"]["candidate"]["label"] == "FULL VERIFY FAIL"
     assert "因果" in details["note"]
 
 
@@ -44,3 +45,21 @@ async def test_no_reference_is_explicit(fake_runner, repo, tmp_path):
     assert details["matched_reference"] is None
     assert details["timeline_diff"]["status"] == "INSUFFICIENT_REFERENCE"
     assert "没有足够" in details["note"]
+
+
+def test_action_groups_align_verification_anchors_without_zip_drift():
+    candidate = [
+        {"kind": "command", "summary": "pytest -q -k targeted"},
+        {"kind": "final", "summary": "complete"},
+    ]
+    reference = [
+        {"kind": "command", "summary": "pytest -q -k targeted"},
+        {"kind": "command", "summary": "pytest -q"},
+        {"kind": "final", "summary": "complete"},
+    ]
+
+    divergence = first_meaningful_divergence(candidate, reference)
+
+    assert divergence["status"] == "DIVERGENCE"
+    assert divergence["candidate"] is None
+    assert divergence["reference"]["label"] == "VERIFY full"

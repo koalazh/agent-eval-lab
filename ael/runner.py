@@ -16,6 +16,7 @@ from .persistence import Repository
 from .process import ProcessSupervisor
 from .redaction import redact
 from .observation import filter_event_data, filter_jsonl
+from .otel_ingest import ingest_collector_output
 from .verifier import run_verifier
 from .workspace import WorkspaceManager
 
@@ -162,7 +163,18 @@ class Runner:
                 changes = self.workspaces.capture(workspace, before, evidence_dir / "workspace")
             finally:
                 self.workspaces.cleanup(workspace)
-        events = result.native_events
+        otel_events: list[ObservableEvent] = []
+        otel_summary: dict[str, Any] = {
+            "source": "otel_collector",
+            "run_id": run_id,
+            "events": 0,
+            "evidence": "insufficient evidence",
+        }
+        if variant.observation_profile in {ObservationProfile.TELEMETRY, ObservationProfile.DEEP}:
+            if os.environ.get("AEL_OTEL_ENDPOINT"):
+                await asyncio.sleep(1.0)
+            otel_events, otel_summary = ingest_collector_output(self.repository.root, run_id, evidence_dir)
+        events = [*result.native_events, *otel_events]
         native_dir = evidence_dir / "native"
         native_dir.mkdir(parents=True, exist_ok=True)
         raw_native = filter_jsonl(result.stdout, variant.observation_profile)
@@ -184,7 +196,14 @@ class Runner:
             "".join(json.dumps(filter_event_data(event.to_dict(), variant.observation_profile), sort_keys=True) + "\n" for event in events if event.source == "otel"),
             encoding="utf-8",
         )
-        (telemetry_dir / "summary.json").write_text(json.dumps(redact(result.usage), indent=2, sort_keys=True), encoding="utf-8")
+        (telemetry_dir / "summary.json").write_text(
+            json.dumps(
+                redact({"native_usage": result.usage, "otel": otel_summary}),
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
         (evidence_dir / "metadata.json").write_text(
             json.dumps(
                 redact(
@@ -200,7 +219,8 @@ class Runner:
                         "fingerprint": fingerprint,
                         "session_id": result.session_id,
                         "final_text": result.final_text if variant.observation_profile == ObservationProfile.DEEP else None,
-                        "native_event_count": len(events),
+                        "native_event_count": len(result.native_events),
+                        "otel_event_count": len(otel_events),
                         "error": error,
                     }
                 ),

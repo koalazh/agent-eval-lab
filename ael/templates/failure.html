@@ -1,18 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>失败记录：<code>{{ failure.id }}</code></h1>
-<section>
-  <p><strong>生命周期：</strong> {{ failure.status }}</p>
-  <p><strong>失败签名：</strong> {{ failure.signature }}</p>
-  <p><strong>证据边界：</strong> {{ explorer.get("note", "以下展示确定性证据") }}</p>
-  {% if failure.status != "REGRESSION_GUARDED" %}
-  <form method="post" action="/failures/{{ failure.id }}/promote">
-    <button type="submit">提升为回归保护</button>
-  </form>
-  {% endif %}
+<section class="hero"><div><p class="muted">FAILURE PATTERN</p><h1>{{ failure.id }}</h1><p class="muted">{{ failure.signature }}</p></div><span class="pill">{{ failure.status }}</span></section>
+<section class="grid">
+  <div class="metric"><span>Runs</span><strong>{{ failure.details.get("run_count", 1) }}</strong></div>
+  <div class="metric"><span>Cases</span><strong>{{ failure.details.get("case_id", "unknown") }}</strong></div>
+  <div class="metric"><span>Variants</span><strong>{{ failure.details.get("variant_id", "unknown") }}</strong></div>
+  <div class="metric"><span>Source run</span><strong><a href="/runs/{{ failure.source_run_id }}">{{ failure.source_run_id[:12] }}</a></strong></div>
 </section>
-{% if explorer %}
-  <h2>结果差异</h2>
-  <pre>{{ explorer }}</pre>
-{% endif %}
+<section><h2>Evidence</h2><p>{{ explorer.note or "Failure evidence is available in the Explorer." }}</p>{% if explorer %}<a class="button" href="/runs/{{ explorer.run_id }}/explorer">Open Failure Explorer</a>{% endif %}</section>
+{% if failure.status != "REGRESSION_GUARDED" %}<section><form method="post" action="/failures/{{ failure.id }}/promote"><button type="submit">Pin Case revision to Regression Suite</button></form></section>{% endif %}
 {% endblock %}

@@ -1,31 +1,41 @@
-# 可选的、仅限本机的 Collector 配置。
-# AEL 不实现 OTLP，也不会向外部导出遥测数据。
+# 仅限本机的 Collector 配置。
+# AEL 将 Collector 的三个本地 JSONL 文件作为一个 Evidence Source ingest；不向外部导出。
 receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 127.0.0.1:4317
+        endpoint: 0.0.0.0:4317
       http:
-        endpoint: 127.0.0.1:4318
+        endpoint: 0.0.0.0:4318
 
 processors:
   batch: {}
 
 exporters:
-  debug:
-    verbosity: basic
+  file/traces:
+    path: /output/traces.jsonl
+    format: json
+    append: true
+  file/metrics:
+    path: /output/metrics.jsonl
+    format: json
+    append: true
+  file/logs:
+    path: /output/logs.jsonl
+    format: json
+    append: true
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [file/traces]
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [file/metrics]
     logs:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [file/logs]

@@ -255,6 +255,7 @@ class ClaudeCodeDriver(BinaryAgentDriver):
         if run_context.observation_profile.value in {"telemetry", "deep"}:
             env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
             if env.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+                env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
                 env["OTEL_METRICS_EXPORTER"] = "otlp"
                 env["OTEL_LOGS_EXPORTER"] = "otlp"
             if run_context.observation_profile.value == "deep":

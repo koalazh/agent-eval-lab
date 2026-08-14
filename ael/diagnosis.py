@@ -18,58 +18,106 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
     if not details:
         return {}
     candidate = details.get("candidate", {})
+    candidate_summary = details.get("candidate_summary") or {}
+    reference_summary = details.get("reference_summary") or {}
     observed = [
-        f"运行状态为 {candidate.get('status', 'UNKNOWN')}。",
-        f"Verifier 任务结果为 {candidate.get('outcome', 'UNKNOWN')}。",
+        f"Candidate process 状态为 {candidate.get('status', 'UNKNOWN')}。",
+        f"Verifier task truth 为 {candidate.get('outcome', 'UNKNOWN')}。",
     ]
     evidence: list[str] = []
     counter_evidence: list[str] = []
     unknowns: list[str] = []
     artifact = details.get("artifact_diff", {})
     changes = artifact.get("changes", {})
-    if changes:
-        evidence.append(f"Workspace 变化文件：{changes.get('changed_files', [])}。")
+    changed_files = details.get("artifact_diff", {}).get("meaningful_changed_files", [])
+    if changed_files:
+        evidence.append(f"Candidate workspace 观察到变化文件：{changed_files}。")
+    else:
+        evidence.append("Candidate workspace 没有观察到文件变化。")
     if details.get("matched_reference"):
-        evidence.append(f"匹配的 PASS reference：{details['matched_reference']['run_id']}。")
+        reference_id = details["matched_reference"]["run_id"]
+        evidence.append(f"Matched PASS reference：{reference_id}。")
         scope = details.get("variable_scope") or {}
         if scope.get("changed"):
-            evidence.append(f"记录到的变化变量：{scope['changed']}。")
+            evidence.append(f"Recorded changed variables：{scope['changed']}。")
         if scope.get("same"):
-            counter_evidence.append(f"记录到的相同变量：{scope['same']}。")
+            counter_evidence.append(f"Recorded fixed variables：{scope['same']}。")
+        if reference_summary:
+            evidence.append(
+                f"Reference verifier={reference_summary.get('tests', 'UNKNOWN')}；"
+                f"changed_files={reference_summary.get('changed_files', [])}。"
+            )
+            if candidate.get("outcome") != reference_summary.get("outcome"):
+                evidence.append(
+                    f"Candidate verifier={candidate.get('outcome', 'UNKNOWN')}；"
+                    f"Reference verifier={reference_summary.get('outcome', 'UNKNOWN')}。"
+                )
     else:
         unknowns.append("没有足够接近且 revision 相同的 PASS reference。")
     divergence = details.get("first_meaningful_divergence", {})
     if divergence.get("status") == "DIVERGENCE":
-        evidence.append(f"Anchor sequence 在索引 {divergence.get('anchor_index')} 处分歧：{divergence}。")
+        left = divergence.get("candidate") or {}
+        right = divergence.get("reference") or {}
+        evidence.append(
+            f"First meaningful divergence：Candidate {left.get('label', '—')} / "
+            f"Reference {right.get('label', '—')}。"
+        )
+        if divergence.get("reason") == "verifier outcome differs":
+            observed.append(
+                f"Candidate observed {left.get('label', 'FULL VERIFY UNKNOWN')}；"
+                f"reference observed {right.get('label', 'FULL VERIFY UNKNOWN')}。"
+            )
+        else:
+            observed.append(
+                f"Candidate observed action={left.get('detail', 'none')}；"
+                f"reference observed action={right.get('detail', 'none')}。"
+            )
     else:
-        unknowns.append("normalized anchor sequence 中没有找到明确的有意义分歧。")
+        unknowns.append("Action-group alignment 没有找到可靠的有意义分歧。")
     coverage = details.get("evidence_coverage", {})
     for name, value in coverage.items():
         if value in {"?", "✗"}:
             unknowns.append(f"{name} 的 evidence coverage 为 {value}。")
+    otel = candidate_summary.get("otel") or {}
+    if otel.get("events"):
+        evidence.append(f"Claude/OTel correlated events：{otel['events']}，source={otel.get('source', 'unknown')}。")
+    else:
+        unknowns.append("Candidate 没有 correlated OTel records。")
+    if divergence.get("reason") == "verifier outcome differs":
+        hypothesis_text = (
+            "Candidate 与 PASS reference 的 task truth 不同；当前可确认的是 verifier boundary "
+            "差异，artifact / action evidence 可用于提出下一次实验，但不能单独证明因果。"
+        )
+    elif divergence.get("status") == "DIVERGENCE":
+        hypothesis_text = (
+            "Candidate 与 PASS reference 在可观察 action group 上不同；这与 completion/repair "
+            "路径差异一致，但当前证据不能证明单一因果。"
+        )
+    else:
+        hypothesis_text = "当前只能确认 verifier 结果不同，不能从现有 trajectory 证据定位行为原因。"
     hypotheses = [
         {
-            "statement": "在记录的实验条件下，候选运行结果与匹配的 reference 不同。",
+            "statement": hypothesis_text,
             "evidence": evidence,
             "counter_evidence": counter_evidence,
-            "certainty": "仅为描述性假设",
+            "certainty": "evidence-grounded hypothesis；不输出因果概率",
         }
     ]
     changed = ((details.get("variable_scope") or {}).get("changed") or [])
-    proposed_variable = changed[0] if len(changed) == 1 else "UNSPECIFIED"
+    proposed_variable = changed[0] if len(changed) == 1 else "Run mode"
     return {
         "observed": observed,
         "hypotheses": hypotheses,
         "evidence": evidence,
         "counter_evidence": counter_evidence,
         "unknowns": sorted(set(unknowns)),
-        "suggested_improvement": "在隔离拟议变量并保持相同 trial policy 的情况下，重跑同一 Case revision。",
+        "suggested_improvement": "保持 Agent、Case revision 和 observation 固定，编辑一个真实会改变 driver 行为的 independent variable 后重跑。",
         "best_next_experiment": {
             "status": "DRAFT",
             "requires_user_confirmation": True,
             "proposed_independent_variable": proposed_variable,
             "same_case_revision": bool(candidate.get("case_revision")),
-            "trials": 5,
+            "trials": 2,
         },
         "source_run_id": run_id,
         "model_assisted": False,

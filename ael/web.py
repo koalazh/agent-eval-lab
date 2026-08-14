@@ -198,29 +198,42 @@ def create_app(root: str | Path = ".") -> FastAPI:
         if not run:
             return HTMLResponse("未找到运行记录", status_code=404)
         evidence = Path(run["run_dir"])
+        changes = _read_json(evidence / "workspace" / "changes.json")
         return render(
             request,
             "run.html",
             title=f"运行 {run_id}",
             run=run,
             metadata=_read_json(evidence / "metadata.json"),
-            changes=_read_json(evidence / "workspace" / "changes.json"),
+            changes=changes,
             diff=_read_text(evidence / "workspace" / "diff.patch"),
             verifier=_read_json(evidence / "verifier" / "result.json"),
             telemetry=_read_json(evidence / "telemetry" / "summary.json"),
             native_events=_read_jsonl(evidence / "native" / "events.jsonl", limit=40),
+            otel_events=_read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=40),
+            observable_events=_observable_events(
+                _read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=40),
+                _read_jsonl(evidence / "native" / "events.jsonl", limit=40),
+            ),
+            otel_raw=_read_text(evidence / "telemetry" / "otel" / "raw.jsonl", limit=30000),
+            visible_changed_files=_visible_changed_files(changes),
         )
 
     @app.get("/runs/{run_id}/explorer", response_class=HTMLResponse)
     async def explorer_page(request: Request, run_id: str):
         if not repository.get_run(run_id):
             return HTMLResponse("未找到运行记录", status_code=404)
+        explorer = compare_run_details(repository, run_id)
+        reference_id = (explorer.get("matched_reference") or {}).get("run_id")
         return render(
             request,
             "explorer.html",
             title=f"失败分析器 {run_id}",
-            explorer=compare_run_details(repository, run_id),
+            explorer=explorer,
             diagnosis=diagnose_run(repository, run_id),
+            timeline_rows=_timeline_rows(explorer),
+            candidate_raw=_raw_events(repository.get_run(run_id)),
+            reference_raw=_raw_events(repository.get_run(reference_id)) if reference_id else "",
         )
 
     @app.post("/runs/{run_id}/follow-up")
@@ -396,6 +409,49 @@ def _is_within(root: Path, candidate: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _timeline_rows(explorer: dict[str, Any]) -> list[dict[str, Any]]:
+    candidate = (explorer.get("timeline_diff") or {}).get("candidate") or []
+    reference = (explorer.get("timeline_diff") or {}).get("reference") or []
+    return [
+        {
+            "candidate": candidate[index] if index < len(candidate) else None,
+            "reference": reference[index] if index < len(reference) else None,
+        }
+        for index in range(max(len(candidate), len(reference)))
+    ]
+
+
+def _raw_events(run: dict[str, Any] | None) -> str:
+    if not run:
+        return ""
+    path = Path(run["run_dir"]) / "native" / "raw.jsonl"
+    return _read_text(path, limit=30000)
+
+
+def _visible_changed_files(changes: dict[str, Any]) -> list[str]:
+    return [
+        path
+        for path in (changes.get("changed_files") or [])
+        if not path.startswith("__pycache__/")
+        and not path.startswith(".pytest_cache/")
+        and not path.endswith((".pyc", ".pyo"))
+    ]
+
+
+def _observable_events(
+    otel_events: list[dict[str, Any]],
+    native_events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    events = otel_events or native_events
+    actionable = {"tool_call", "tool_result", "command", "file_change", "verification"}
+    filtered = [event for event in events if event.get("kind") in actionable]
+    try:
+        filtered.sort(key=lambda event: int(str(event.get("timestamp") or "0")))
+    except ValueError:
+        pass
+    return filtered or events[:20]
 
 
 def _slug(value: str) -> str:

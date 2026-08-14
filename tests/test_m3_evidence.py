@@ -7,6 +7,7 @@ import pytest
 
 from ael.models import ObservationProfile
 from ael.observation import filter_jsonl
+from ael.otel_ingest import ingest_collector_output
 from ael.redaction import redact_text
 
 
@@ -38,6 +39,44 @@ def test_redaction_covers_common_credentials():
     assert "sk-1234567890abcdef" not in result
     assert "abcdefghijklmnop" not in result
     assert "[REDACTED]" in result
+
+
+def test_collector_output_is_correlated_by_run_id(tmp_path: Path):
+    collector = tmp_path / ".ael" / "otel"
+    collector.mkdir(parents=True)
+    payload = {
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "ael.run.id", "value": {"stringValue": "run-1"}},
+                    ]
+                },
+                "scopeLogs": [
+                    {
+                        "logRecords": [
+                            {
+                                "timeUnixNano": "1",
+                                "body": {"stringValue": "tool_call Bash"},
+                                "attributes": [
+                                    {"key": "event.name", "value": {"stringValue": "tool_call"}},
+                                ],
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+    (collector / "logs.jsonl").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    events, summary = ingest_collector_output(tmp_path, "run-1", tmp_path / "run")
+
+    assert len(events) == 1
+    assert events[0].source == "otel"
+    assert events[0].kind == "tool_call"
+    assert summary["records"] == {"logs": 1}
+    assert summary["evidence"].startswith("real OTLP")
 
 
 @pytest.mark.asyncio

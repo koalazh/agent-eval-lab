@@ -1,17 +1,33 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="hero"><div><p class="muted">RUN</p><h1>{{ run.case_id }} · {{ run.variant_id }}</h1><p class="muted">trial {{ run.trial }} · {{ run.id }}</p></div><a class="button secondary" href="/runs/{{ run.id }}/explorer">Open Failure Explorer</a></section>
+{% set otel = telemetry.get("otel", {}) %}
+{% set native_usage = telemetry.get("native_usage", telemetry) %}
+<section class="hero"><div><p class="muted">RUN EVIDENCE</p><h1>{{ run.case_id }} · {{ run.variant_id }}</h1><p class="muted">trial {{ run.trial }} · {{ run.id }}</p></div><a class="button secondary" href="/runs/{{ run.id }}/explorer">Open Failure Explorer</a></section>
 <section class="grid">
   <div class="metric"><span class="muted">Result</span><strong class="{{ run.task_outcome }}">{{ run.task_outcome }}</strong></div>
   <div class="metric"><span class="muted">Process</span><strong>{{ run.run_status }}</strong></div>
   <div class="metric"><span class="muted">Duration</span><strong>{{ metadata.get("duration_seconds", "unknown") }}s</strong></div>
-  <div class="metric"><span class="muted">Changed files</span><strong>{{ changes.get("changed_files", [])|length }}</strong></div>
+  <div class="metric"><span class="muted">Changed files</span><strong>{{ visible_changed_files|length }}</strong></div>
 </section>
+
+<section>
+  <h2>Telemetry</h2>
+  <p class="muted">Only metrics actually supplied by the Agent/Collector are shown; missing values remain unknown.</p>
+  <div class="grid">
+    <div class="metric"><span>Model calls</span><strong>{{ otel.get("model_calls", "unknown") }}</strong></div>
+    <div class="metric"><span>Tool calls</span><strong>{{ otel.get("tool_calls", "unknown") }}</strong></div>
+    <div class="metric"><span>Input tokens</span><strong>{{ otel.get("input_tokens", native_usage.get("input_tokens", "unknown")) }}</strong></div>
+    <div class="metric"><span>Output tokens</span><strong>{{ otel.get("output_tokens", native_usage.get("output_tokens", "unknown")) }}</strong></div>
+    <div class="metric"><span>OTel duration</span><strong>{{ otel.get("duration_ms", "unknown") }}ms</strong></div>
+    <div class="metric"><span>OTel evidence</span><strong>{{ otel.get("events", 0) }} events</strong></div>
+  </div>
+  {% if otel.get("evidence") %}<p class="pill">{{ otel.evidence }}</p>{% endif %}
+</section>
+
 <section><h2>Evidence coverage</h2><div class="grid">{% for name, value in run.evidence_coverage.items() %}<div class="metric"><span>{{ name }}</span><strong>{{ value }}</strong></div>{% endfor %}</div></section>
 <section class="two-col">
-  <div><h2>Verifier</h2><p class="{{ verifier.get("outcome", "UNKNOWN") }}">{{ verifier.get("outcome", "UNKNOWN") }}</p><p class="muted">{{ verifier.get("duration_seconds", "unknown") }}s</p></div>
-  <div><h2>Telemetry</h2><p>Model/token usage is shown only when the Run supplied evidence.</p><pre>{{ telemetry }}</pre></div>
+  <div><h2>Verifier</h2><p class="{{ verifier.get("outcome", "UNKNOWN") }}"><strong>{{ verifier.get("outcome", "UNKNOWN") }}</strong></p><p class="muted">{{ verifier.get("duration_seconds", "unknown") }}s</p><details><summary>Verifier output</summary><pre>{{ verifier.get("stdout", "") }}{{ verifier.get("stderr", "") }}</pre></details></div>
+  <div><h2>Workspace</h2><p>{{ visible_changed_files|join(", ") or "No changed files" }}</p><details><summary>Artifact diff</summary><pre>{{ diff }}</pre></details></div>
 </section>
-<section><h2>Workspace</h2><p>{{ changes.get("changed_files", [])|join(", ") or "No changed files" }}</p><details><summary>Diff</summary><pre>{{ diff }}</pre></details></section>
-<section><h2>Native timeline</h2><div>{% for event in native_events %}<p><span class="pill">{{ event.get("kind", "unknown") }}</span> <strong>{{ event.get("name", "") }}</strong> {{ event.get("summary", "") }}</p>{% else %}<p class="muted">No normalized native events.</p>{% endfor %}</div></section>
+<section><h2>Observable timeline</h2><p class="muted">Only actionable normalized events are shown here; metrics remain in the summary and raw evidence is expandable.</p><div>{% for event in observable_events %}<p><span class="pill">{{ event.get("source", "native") or "native" }} · {{ event.get("kind", "unknown") or "unknown" }}</span> <strong>{{ event.get("name", "") or "" }}</strong> {{ event.get("summary", "") or "" }}</p>{% else %}<p class="muted">No normalized observable events.</p>{% endfor %}</div><details><summary>Raw OTel correlated evidence</summary><pre>{{ otel_raw }}</pre></details></section>
 {% endblock %}

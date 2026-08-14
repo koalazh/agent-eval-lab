@@ -70,13 +70,30 @@ fixture 在整次真实实验后保持原始 revision。
 
 Run 默认使用 `minimal` 观察配置。`minimal` 和 `telemetry` 保留归一化行为摘要，但会省略结构化 prompt（提示词）、tool arguments（工具参数）、tool results（工具结果）和 transcript（转录）字段；只有显式选择 `deep` 才会保留这些字段，并继续进行凭据脱敏。每个 Run 都会在 fingerprint 中记录 ObservationProfile。
 
-Phase B 的 OTel vertical slice 正在实现；在它通过真实 Claude 验收前，不能把当前代码当作
-完成能力。AEL 会注入单次运行
-的 resource attributes，绝不修改用户全局 Agent 配置。`infra/otel-collector.yaml`
-保持 local-only；Collector → 持久化 ingest → UI 的真实 Claude vertical slice 属于
-Phase B，不能用“环境变量已设置”或 debug exporter 文件替代验收。
+Phase B 的 Claude Code OTel vertical slice 已在本机真实验证：Claude Code 2.1.229 → OTLP
+HTTP → local-only Collector → `.ael/otel/{logs,metrics,traces}.jsonl` → 按 `ael.run.id`
+ingest → Run Evidence / Failure Explorer。正式 Phase A 的 Run
+`f0dab3c6f17a4447b392513d2ccc26a4` 实际收到了 2 个 log records、1 个 metric record、35
+个关联事件，包含 6 model calls、5 tool calls、15,794 input tokens、3,273 output tokens；
+Run 页面和 Explorer 都可见这些结果。这里的 35 个事件来自真实 Collector 输出，不是环境变量、
+空文件或 debug exporter 的存在性证明。
 
-对于 Claude Code，只有提供 `AEL_OTEL_ENDPOINT` 时，`telemetry` 才会通过单次运行环境启用 metrics/logs；`deep` 还会显式打开 prompt 和 tool payload 字段。默认仍是 `minimal`。
+Collector 只绑定 loopback，使用 Docker 启动（不会启动 Grafana/Tempo/Prometheus/Jaeger）：
+
+    docker run -d --name ael-otel \
+      -p 127.0.0.1:4317:4317 -p 127.0.0.1:4318:4318 \
+      -v "$PWD/infra/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro" \
+      -v "$PWD/.ael/otel:/output" \
+      otel/opentelemetry-collector-contrib:0.133.0 \
+      --config=/etc/otelcol-contrib/config.yaml
+
+    AEL_OTEL_ENDPOINT=http://127.0.0.1:4318 \
+      uv run ael ui --root . --host 127.0.0.1 --port 8713
+
+OTel 是 AEL 的一个 Evidence Source，不取代 Verifier（task truth）、Workspace
+（environment truth）或 Agent native trace；没有真实 telemetry 时 UI 会显示 insufficient
+evidence。对于 Claude Code，只有提供 `AEL_OTEL_ENDPOINT` 时，`telemetry` 才会通过单次运行
+环境启用 metrics/logs；`deep` 还会显式打开 prompt 和 tool payload 字段。默认仍是 `minimal`。
 
 ## 示例
 
