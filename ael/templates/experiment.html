@@ -1,24 +1,24 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Experiment: {{ experiment_id }}</h1>
+<h1>实验：{{ experiment_id }}</h1>
 <section>
-  <strong>Matrix</strong>
-  <p>{{ matrix.runs }} runs · Variant × Case × Trial</p>
+  <strong>矩阵</strong>
+  <p>{{ matrix.runs }} 次运行 · 变体 × 用例 × 试验</p>
   <table>
-    <tr><th>Case</th><th>Variant</th><th>Trials</th><th>Classification</th><th>Outcome</th></tr>
+    <tr><th>用例</th><th>变体</th><th>试验次数</th><th>分类</th><th>任务结果</th></tr>
     {% for row in matrix.rows %}
     <tr>
       <td>{{ row.case_id }}</td><td>{{ row.variant_id }}</td>
       <td>{{ row.display }}</td><td>{{ row.classification }}</td>
-      <td>{{ row.passes }} pass / {{ row.fails }} fail / {{ row.unknown }} unknown</td>
+      <td>{{ row.passes }} 通过 / {{ row.fails }} 失败 / {{ row.unknown }} 未知</td>
     </tr>
     {% endfor %}
   </table>
 </section>
 <section>
-  <strong>Runs</strong>
+  <strong>运行记录</strong>
   <table>
-    <tr><th>Run</th><th>Case</th><th>Variant</th><th>Trial</th><th>Status</th><th>Outcome</th></tr>
+    <tr><th>运行记录</th><th>用例</th><th>变体</th><th>试验</th><th>运行状态</th><th>任务结果</th></tr>
     {% for run in runs %}
     <tr>
       <td><a href="/runs/{{ run.id }}"><code>{{ run.id[:12] }}</code></a></td>
@@ -30,4 +30,3 @@
   </table>
 </section>
 {% endblock %}
-

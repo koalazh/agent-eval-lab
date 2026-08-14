@@ -1,5 +1,5 @@
-# Manual-only live smoke.
-# This file is never invoked by ordinary tests and does not contain credentials.
+# 仅供手动执行的真实冒烟验证。
+# 普通测试不会调用此文件，文件中也不包含凭据。
 id: live-smoke
 suite:
   id: smoke
@@ -24,4 +24,3 @@ variants:
     observation_profile: minimal
 trials: 1
 max_concurrency: 1
-

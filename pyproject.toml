@@ -1,7 +1,7 @@
 [project]
 name = "agent-eval-lab"
 version = "0.1.0"
-description = "Local-first experiments for understanding how and why coding agents change."
+description = "用于理解 Coding Agent 如何以及为何变化的本地实验系统。"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -32,4 +32,3 @@ packages = ["ael"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-

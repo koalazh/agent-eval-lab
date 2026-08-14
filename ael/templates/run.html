@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Run <code>{{ run.id }}</code></h1>
+<h1>运行 <code>{{ run.id }}</code></h1>
 <section>
-  <p><strong>Status:</strong> {{ run.run_status }} <strong>Task outcome:</strong> {{ run.task_outcome }}</p>
-  <p><strong>Case:</strong> {{ run.case_id }} <strong>Variant:</strong> {{ run.variant_id }} <strong>Trial:</strong> {{ run.trial }}</p>
-  <p><strong>Evidence coverage:</strong> {{ run.evidence_coverage }}</p>
-  <p><a href="/runs/{{ run.id }}/explorer">Open deterministic Failure Explorer</a></p>
+  <p><strong>运行状态：</strong> {{ run.run_status }} <strong>任务结果：</strong> {{ run.task_outcome }}</p>
+  <p><strong>用例：</strong> {{ run.case_id }} <strong>变体：</strong> {{ run.variant_id }} <strong>试验：</strong> {{ run.trial }}</p>
+  <p><strong>证据覆盖：</strong> {{ run.evidence_coverage }}</p>
+  <p><a href="/runs/{{ run.id }}/explorer">打开确定性失败分析器</a></p>
 </section>
-<details open><summary>Verifier truth</summary><pre>{{ verifier }}</pre></details>
-<details open><summary>Workspace diff</summary><pre>{{ diff }}</pre></details>
-<details><summary>Native normalized events</summary><pre>{{ native }}</pre></details>
-<details><summary>Metadata</summary><pre>{{ metadata }}</pre></details>
+<details open><summary>验证器真值</summary><pre>{{ verifier }}</pre></details>
+<details open><summary>工作区差异</summary><pre>{{ diff }}</pre></details>
+<details><summary>原生归一化事件</summary><pre>{{ native }}</pre></details>
+<details><summary>元数据</summary><pre>{{ metadata }}</pre></details>
 {% endblock %}

@@ -1,107 +1,108 @@
 # Agent Eval Lab
 
-> Agent Eval Lab is not a leaderboard.
-> It is a local experiment system for understanding how and why coding agents change.
+> Agent Eval Lab 不是排行榜。
+> 它是一个用于理解 Coding Agent 如何以及为何发生变化的本地实验系统。
 
-**Compare cases, not just scores.**
+**比较用例，而不只是分数。**
 
-**Evidence before interpretation.**
+**先看证据，再做解释。**
 
-**Turn failures into the next experiments.**
+**把失败变成下一次实验。**
 
-AEL is a local-first Coding Agent experiment lab. It runs the same Case against Agent Variants and Trials, asks an independent verifier for task truth, preserves workspace/native evidence, and makes failures the input to the next experiment.
+AEL 是一个本地优先的 Coding Agent 实验平台。它让同一批 Case（用例）在不同 Agent Variant（智能体变体）和 Trial（试验轮次）上运行，由独立 verifier（验证器）判断任务真值，保存工作区与原生证据，并把真实失败沉淀为后续实验。
 
-## Development
+## 开发
 
-This project uses uv and Python 3.11+.
+项目使用 `uv` 和 Python 3.11 及以上版本。
 
-Run:
+执行：
 
     uv sync --extra test
     uv run pytest
     uv run ael doctor
 
-No paid model calls are made by the test suite.
+测试套件不会调用付费模型。
 
-## Local evidence
+## 本地证据
 
-AEL keeps native output and normalized events separate from verifier truth:
+AEL 将原生输出和归一化事件与验证器真值分开保存：
 
-- verifier: whether the task passed;
-- workspace: what changed;
-- native/telemetry: behavior evidence.
+- verifier（验证器）：任务是否通过；
+- workspace（工作区）：实际发生了哪些文件变化；
+- native/telemetry（原生输出/遥测）：Agent 的行为证据。
 
-Host-local filesystem copying is workspace isolation, not an OS or security sandbox. An Agent sandbox and approval policy remain part of its recorded variant/run fingerprint.
+主机本地文件系统复制只是工作区隔离，不等于操作系统或安全沙箱。Agent 自身的 sandbox（沙箱）和 approval policy（审批策略）会记录在对应的 variant/run fingerprint（变体/运行指纹）中。
 
-## Current machine probe
+## 当前机器探测
 
-The read-only M1 probe currently reports Codex CLI 0.147.0, Claude Code 2.1.229, and Hermes 0.20.0 on this machine. Pi is not on PATH, so its capability is reported as unavailable until the CLI exists. AEL does not silently install or simulate missing Agents.
+当前只读 M1 探测在本机发现 Codex CLI 0.147.0、Claude Code 2.1.229 和 Hermes 0.20.0。Pi 当前不在 PATH 中，因此会记录为不可用；AEL 不会静默安装或模拟缺失的 Agent。
 
-The real adapters use current machine help and official machine interfaces: Codex exec JSONL, Claude non-interactive stream JSON, Pi RPC JSONL, and Hermes one-shot with a usage file. Their native output stays in each Run's native evidence directory.
+真实 driver（驱动）使用当前 CLI 的机器接口：Codex `exec --json`、Claude 非交互 `stream JSON`、Pi RPC JSONL，以及带 usage 文件的 Hermes oneshot。每个 Run 的原生输出都保存在自己的原生证据目录中。
 
-The manual-only live smoke recipe is:
+手动真实冒烟验证流程：
 
     uv run ael doctor --root .
     uv run ael agents --root .
     uv run ael run examples/experiments/live-smoke.yaml --root .
 
-It never stores credentials in the repository. A missing CLI, unavailable provider, authentication error, or rate limit is recorded as infrastructure/process evidence and is not promoted as an Agent task failure.
+仓库中不会保存凭据。缺失 CLI、provider（提供方）不可用、认证错误或速率限制会记录为基础设施/进程证据，不会被提升为 Agent 任务失败。
 
-## Observation profiles and OTel
+## ObservationProfile 与 OTel
 
-Runs default to minimal observation. Minimal and telemetry retain normalized behavior summaries but omit structured prompt, tool-argument, tool-result, and transcript fields; deep is explicit and preserves those fields subject to credential redaction. Every Run records its ObservationProfile in the fingerprint.
+Run 默认使用 `minimal` 观察配置。`minimal` 和 `telemetry` 保留归一化行为摘要，但会省略结构化 prompt（提示词）、tool arguments（工具参数）、tool results（工具结果）和 transcript（转录）字段；只有显式选择 `deep` 才会保留这些字段，并继续进行凭据脱敏。每个 Run 都会在 fingerprint 中记录 ObservationProfile。
 
-Optional telemetry uses per-run OpenTelemetry resource attributes and never edits user-global Agent configuration. The sample Collector at `infra/otel-collector.yaml` binds only to localhost and exports to a local debug exporter. Without a Collector, AEL still runs; the doctor result says `NOT_FOUND`.
+可选遥测通过单次运行的 OpenTelemetry resource attributes 注入，绝不修改用户全局 Agent 配置。示例 Collector 配置位于 `infra/otel-collector.yaml`，只绑定 localhost 并导出到本地 debug exporter。没有 Collector 时 AEL 仍然可以运行，doctor 会显示 `NOT_FOUND`。
 
-For Claude Code, `telemetry` enables its metrics/logs through the per-run environment only when `AEL_OTEL_ENDPOINT` is supplied; `deep` additionally opts into prompt and tool payload fields. Minimal remains the default.
+对于 Claude Code，只有提供 `AEL_OTEL_ENDPOINT` 时，`telemetry` 才会通过单次运行环境启用 metrics/logs；`deep` 还会显式打开 prompt 和 tool payload 字段。默认仍是 `minimal`。
 
-## Example
+## 示例
 
-A future comparison should be readable as:
+一次比较应当能读成：
 
     Minimal v0.3       PASS
     Minimal v0.4       FAIL
 
-    same:
-    model
-    task
-    runtime
+    相同：
+    模型
+    任务
+    运行时
 
-    changed:
+    变化：
     compaction=true
 
-    next experiment:
-    compaction off/on on context regression suite
+    下一次实验：
+    在上下文回归套件上比较 compaction off/on
 
-The report should say what is observed and what remains unknown, rather than claiming that a model is a precise percentage responsible.
+报告应当区分已观察到的事实和未知信息，而不是声称某个模型承担了精确百分比的责任。
 
-## Product boundary
+## 产品边界
 
-AEL focuses on matrix execution, differential comparison, evidence fusion, failure investigation, failure-to-experiment, and failure-to-regression. It is not a distributed runner, agent runtime, generic plugin framework, OTel backend, or cloud service.
+AEL 聚焦于矩阵执行、差异比较、证据融合、失败调查、失败到实验和失败到回归。它不是分布式运行器、Agent runtime、通用插件框架、OTel backend 或云服务。
 
-## Differential evidence
+## 差异证据
 
-The deterministic Failure Explorer first checks Case revision, selects the closest PASS reference, and shows SAME/CHANGED/UNKNOWN variables, confidence (`CONTROLLED`, `PARTIAL`, or `DESCRIPTIVE`), verifier/workspace evidence, normalized anchor timelines, and the first meaningful divergence. If the reference or anchor evidence is insufficient it says so; it does not invent a causal root cause.
+确定性的 Failure Explorer（失败分析器）会先检查 Case revision，再选择最接近的 PASS 参考运行，并展示 SAME/CHANGED/UNKNOWN 变量、`CONTROLLED`/`PARTIAL`/`DESCRIPTIVE` 置信度、verifier/workspace 证据、归一化锚点时间线和首次有意义的分歧。如果参考运行或锚点证据不足，系统会明确说明，不会编造因果根因。
 
-Diagnosis consumes that compact packet, not an unbounded trace. Without configuration it returns deterministic hypotheses and unknowns. With `AEL_DIAGNOSIS_BASE_URL`, `AEL_DIAGNOSIS_API_KEY`, and `AEL_DIAGNOSIS_MODEL`, it can call one OpenAI-compatible chat-completions endpoint; the key is used only in the request header. A follow-up action creates a user-confirmed `DRAFT` experiment over the same Case revision and records the proposed independent variable.
+Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用一个 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。后续操作会在同一 Case revision 上创建需要用户确认的 `DRAFT` experiment，并记录拟隔离的 independent variable。
 
-## Failure Book
+## 失败记录簿（Failure Book）
 
-Completed processes with verifier FAIL become `OBSERVED` Failure Book entries. A user can promote one to `REGRESSION_GUARDED`; AEL copies the fixture and Python grader, adds a new Case revision to the Regression Suite, and leaves the source Case untouched. Later experiments can be constructed from that persisted Suite and rerun with the same verifier.
+只有进程已完成且 verifier 返回 FAIL 的记录才会进入失败记录簿，并以 `OBSERVED` 开始。用户可以将其提升为 `REGRESSION_GUARDED`；AEL 会复制 fixture 和 Python grader，创建新的 Case revision，加入 Regression Suite，同时保持源 Case 不变。之后可以从这个持久化 Suite 构造实验并用同一 verifier 重跑。
 
-## License
+## 可运行示例
 
-Internal greenfield prototype.
-## Runnable example
-
-The repository includes a no-cost deterministic matrix:
+仓库包含一个不调用模型的确定性矩阵：
 
     uv run ael run examples/experiments/fake-matrix.yaml --root .
 
-Then open the local UI:
+然后启动本地 Web UI：
 
     uv run ael ui --root .
 
-The example intentionally produces both stable PASS and stable FAIL rows without calling a model.
+该示例会产生稳定通过和稳定失败两类结果。
 
-For a persisted experiment, use `uv run ael compare <experiment-a> <experiment-b> --root .` and inspect the run-level Failure Explorer from the local UI. AEL writes the database and large evidence under `.ael/`, which is ignored by Git.
+对于已经持久化的实验，可以执行 `uv run ael compare <experiment-a> <experiment-b> --root .`，再从本地 UI 打开对应 Run 的 Failure Explorer。AEL 将数据库和大型证据写入 `.ael/`，该目录已被 Git 忽略。
+
+## 许可
+
+内部全新原型项目。

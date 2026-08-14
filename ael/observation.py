@@ -31,7 +31,7 @@ _SENSITIVE_KEYS = {
 def _strip_sensitive(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: "[OMITTED: observation profile]"
+            key: "[已省略：当前 observation profile 不采集此字段]"
             if key.lower() in _SENSITIVE_KEYS
             else _strip_sensitive(item)
             for key, item in value.items()

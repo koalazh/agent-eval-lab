@@ -46,7 +46,7 @@ async def run_verifier(
             grader = case.source_path.parent / grader
         argv = [sys.executable, str(grader)]
     else:
-        return VerifierResult("ERROR", None, "", "", 0.0, "no verifier configured")
+        return VerifierResult("ERROR", None, "", "", 0.0, "未配置 verifier")
     start = time.monotonic()
     process = await supervisor.run(
         argv,
@@ -56,7 +56,7 @@ async def run_verifier(
     )
     duration = time.monotonic() - start
     if process.timed_out:
-        outcome, error = "ERROR", "verifier timeout"
+        outcome, error = "ERROR", "verifier 超时"
     elif process.error:
         outcome, error = "ERROR", process.error
     elif process.returncode == 0:
@@ -71,4 +71,3 @@ async def run_verifier(
         json.dumps(result.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
     )
     return result
-

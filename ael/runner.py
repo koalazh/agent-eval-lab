@@ -80,7 +80,7 @@ class Runner:
         evidence_dir = self.repository.evidence_dir(run_id)
         driver = self.drivers.get(variant.agent_id)
         if driver is None:
-            raise ValueError(f"no driver registered for {variant.agent_id}")
+            raise ValueError(f"未注册 driver：{variant.agent_id}")
         fingerprint = self._fingerprint(experiment, case, variant, trial, driver)
         self.repository.create_run(run_id, experiment, case, variant, trial, fingerprint, evidence_dir)
         workspace, before = self.workspaces.create(case.fixture_path, run_id)
@@ -121,7 +121,7 @@ class Runner:
             observation_profile=variant.observation_profile,
             case_prompt=case.prompt,
         )
-        result = DriverResult(process_error="driver did not return")
+        result = DriverResult(process_error="driver 未返回结果")
         status = RunStatus.INVALID
         outcome = TaskOutcome.UNKNOWN
         verifier_result = None
@@ -136,10 +136,10 @@ class Runner:
                 status = RunStatus.TIMEOUT
             elif result.process_error or result.exit_code not in (0, None):
                 status = RunStatus.PROCESS_ERROR
-                error = result.process_error or f"agent exit code {result.exit_code}"
+                error = result.process_error or f"Agent exit code={result.exit_code}"
             elif result.exit_code is None:
                 status = RunStatus.PROCESS_ERROR
-                error = "agent exit code unavailable"
+                error = "Agent exit code 不可用"
             else:
                 status = RunStatus.COMPLETED
                 verifier_result = await run_verifier(case, workspace, evidence_dir / "verifier", self.supervisor)
@@ -150,11 +150,11 @@ class Runner:
                 else:
                     outcome = TaskOutcome.UNKNOWN
                     status = RunStatus.VERIFIER_ERROR
-                    error = verifier_result.error or "verifier error"
+                    error = verifier_result.error or "verifier 错误"
         except asyncio.TimeoutError:
-            status, error, result = RunStatus.TIMEOUT, "agent timeout", DriverResult(timed_out=True, process_error="agent timeout")
+            status, error, result = RunStatus.TIMEOUT, "Agent 超时", DriverResult(timed_out=True, process_error="Agent 超时")
         except asyncio.CancelledError:
-            status, error, result = RunStatus.CANCELLED, "run cancelled", DriverResult(cancelled=True, process_error="run cancelled")
+            status, error, result = RunStatus.CANCELLED, "运行已取消", DriverResult(cancelled=True, process_error="运行已取消")
         except Exception as exc:
             status, error, result = RunStatus.PROCESS_ERROR, f"{type(exc).__name__}: {exc}", DriverResult(process_error=f"{type(exc).__name__}: {exc}")
         finally:

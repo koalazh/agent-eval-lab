@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Failures</h1>
-<p class="muted">Only valid task failures (completed process plus verifier FAIL) become Failure Book entries.</p>
-{% if not failures %}<p>No observed failures yet.</p>{% endif %}
+<h1>失败记录</h1>
+<p class="muted">只有有效任务失败（进程完成且 verifier 返回 FAIL）才会进入失败记录簿。</p>
+{% if not failures %}<p>还没有观察到失败。</p>{% endif %}
 <table>
-  <tr><th>Failure</th><th>Status</th><th>Source run</th><th>Signature</th></tr>
+  <tr><th>失败记录</th><th>状态</th><th>来源运行</th><th>签名</th></tr>
   {% for failure in failures %}
   <tr>
     <td><a href="/failures/{{ failure.id }}"><code>{{ failure.id }}</code></a></td>
@@ -15,4 +15,3 @@
   {% endfor %}
 </table>
 {% endblock %}
-

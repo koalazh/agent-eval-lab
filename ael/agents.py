@@ -52,6 +52,5 @@ def collector_status(host: str = "127.0.0.1", ports: tuple[int, ...] = (4317, 43
         "ports": list(ports),
         "open_ports": open_ports,
         "available": bool(open_ports),
-        "scope": "localhost only; AEL does not implement an OTLP backend",
+        "scope": "仅限 localhost；AEL 不实现 OTLP backend。",
     }
-

@@ -31,15 +31,15 @@ def create_app(root: str | Path = ".") -> FastAPI:
     @app.get("/agents", response_class=HTMLResponse)
     async def agents_page(request: Request):
         rows = probe_registry(repository)
-        return render(request, "agents.html", title="Agents", agents=rows)
+        return render(request, "agents.html", title="智能体", agents=rows)
 
     @app.get("/cases", response_class=HTMLResponse)
     async def cases_page(request: Request):
-        return render(request, "cases.html", title="Cases", cases=repository.list_cases())
+        return render(request, "cases.html", title="用例", cases=repository.list_cases())
 
     @app.get("/experiments", response_class=HTMLResponse)
     async def experiments_page(request: Request):
-        return render(request, "experiments.html", title="Experiments", experiments=repository.list_experiments())
+        return render(request, "experiments.html", title="实验", experiments=repository.list_experiments())
 
     @app.get("/experiments/{experiment_id}", response_class=HTMLResponse)
     async def experiment_page(request: Request, experiment_id: str):
@@ -47,7 +47,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         return render(
             request,
             "experiment.html",
-            title=f"Experiment {experiment_id}",
+            title=f"实验 {experiment_id}",
             experiment_id=experiment_id,
             runs=runs,
             matrix=matrix_report(runs),
@@ -57,12 +57,12 @@ def create_app(root: str | Path = ".") -> FastAPI:
     async def run_page(request: Request, run_id: str):
         run = repository.get_run(run_id)
         if not run:
-            return HTMLResponse("Run not found", status_code=404)
+            return HTMLResponse("未找到运行记录", status_code=404)
         evidence = Path(run["run_dir"])
         return render(
             request,
             "run.html",
-            title=f"Run {run_id}",
+            title=f"运行 {run_id}",
             run=run,
             metadata=_read_json(evidence / "metadata.json"),
             native=_read_text(evidence / "native" / "events.jsonl"),
@@ -73,11 +73,11 @@ def create_app(root: str | Path = ".") -> FastAPI:
     @app.get("/runs/{run_id}/explorer", response_class=HTMLResponse)
     async def explorer_page(request: Request, run_id: str):
         if not repository.get_run(run_id):
-            return HTMLResponse("Run not found", status_code=404)
+            return HTMLResponse("未找到运行记录", status_code=404)
         return render(
             request,
             "explorer.html",
-            title=f"Failure Explorer {run_id}",
+            title=f"失败分析器 {run_id}",
             explorer=compare_run_details(repository, run_id),
             diagnosis=diagnose_run(repository, run_id),
         )
@@ -92,16 +92,16 @@ def create_app(root: str | Path = ".") -> FastAPI:
 
     @app.get("/failures", response_class=HTMLResponse)
     async def failures_page(request: Request):
-        return render(request, "failures.html", title="Failures", failures=repository.list_failures())
+        return render(request, "failures.html", title="失败记录", failures=repository.list_failures())
 
     @app.get("/failures/{failure_id}", response_class=HTMLResponse)
     async def failure_page(request: Request, failure_id: str):
         failure = repository.get_failure(failure_id)
         if not failure:
-            return HTMLResponse("Failure not found", status_code=404)
+            return HTMLResponse("未找到失败记录", status_code=404)
         source_run = repository.get_run(failure["source_run_id"])
         explorer = compare_run_details(repository, source_run["id"]) if source_run else {}
-        return render(request, "failure.html", title=f"Failure {failure_id}", failure=failure, explorer=explorer)
+        return render(request, "failure.html", title=f"失败记录 {failure_id}", failure=failure, explorer=explorer)
 
     @app.post("/failures/{failure_id}/promote")
     async def promote_failure_page(request: Request, failure_id: str):

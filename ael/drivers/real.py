@@ -71,7 +71,7 @@ def _normalize(raw: dict[str, Any], source: str) -> ObservableEvent:
                 return ObservableEvent(
                     kind="tool_call",
                     name=str(block.get("name") or block.get("tool_name") or "tool"),
-                    summary="tool call",
+                    summary="工具调用",
                     source=source,
                     data=raw,
                 )
@@ -79,7 +79,7 @@ def _normalize(raw: dict[str, Any], source: str) -> ObservableEvent:
                 return ObservableEvent(
                     kind="tool_result",
                     name=str(block.get("name") or block.get("tool_name") or "tool"),
-                    summary="tool result",
+                    summary="工具结果",
                     source=source,
                     data=raw,
                 )
@@ -122,7 +122,7 @@ class BinaryAgentDriver:
             return self._probed
         path = shutil.which(self.binary)
         if not path:
-            self._probed = Capabilities(available=False, notes=(f"{self.binary} not found on PATH",))
+            self._probed = Capabilities(available=False, notes=(f"{self.binary} 未在 PATH 中找到",))
             self._agent = Agent(
                 self.agent_id,
                 self.display_name,
@@ -182,7 +182,7 @@ class CodexDriver(BinaryAgentDriver):
             controlled_support="full",
             supports_telemetry=False,
             supports_deep=True,
-            notes=("current CLI help exposes exec --json and per-run config/sandbox flags",),
+            notes=("当前 CLI help 提供 exec --json 以及 per-run config/sandbox 参数。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
@@ -243,7 +243,7 @@ class ClaudeCodeDriver(BinaryAgentDriver):
             controlled_support="full",
             supports_telemetry=True,
             supports_deep=True,
-            notes=("current CLI help exposes print, stream-json, safe-mode, and no-session-persistence",),
+            notes=("当前 CLI help 提供 print、stream-json、safe-mode 和 no-session-persistence。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
@@ -318,7 +318,7 @@ class PiDriver(BinaryAgentDriver):
             controlled_support="partial",
             supports_telemetry=False,
             supports_deep=True,
-            notes=("RPC protocol is current native JSONL; controlled context-file isolation depends on current CLI flags",),
+            notes=("RPC protocol 是当前 native JSONL；controlled context-file isolation 取决于当前 CLI 参数。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
@@ -430,7 +430,7 @@ class HermesDriver(BinaryAgentDriver):
             controlled_support="partial",
             supports_telemetry=False,
             supports_deep=True,
-            notes=("oneshot and usage-file are current; oneshot isolation flags require version-specific validation",),
+            notes=("oneshot 和 usage-file 是当前接口；oneshot isolation 参数需要按版本验证。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:

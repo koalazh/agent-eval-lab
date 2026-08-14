@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Experiments</h1>
-{% if not experiments %}<p class="muted">No experiments have been run yet.</p>{% endif %}
+<h1>实验</h1>
+{% if not experiments %}<p class="muted">还没有运行过实验。</p>{% endif %}
 <table>
-  <tr><th>Experiment</th><th>Suite</th><th>Status</th><th>Trials</th><th>Concurrency</th></tr>
+  <tr><th>实验</th><th>套件</th><th>状态</th><th>试验次数</th><th>并发数</th></tr>
   {% for experiment in experiments %}
   <tr>
     <td><a href="/experiments/{{ experiment.id }}">{{ experiment.id }}</a></td>
@@ -15,4 +15,3 @@
   {% endfor %}
 </table>
 {% endblock %}
-

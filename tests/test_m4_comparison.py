@@ -19,7 +19,7 @@ async def test_failure_explorer_matches_same_revision_pass_and_localizes_evidenc
     assert details["variable_scope"]["same"]
     assert details["artifact_diff"]["diff"]
     assert details["first_meaningful_divergence"]["status"] == "NO_CLEAR_DIVERGENCE"
-    assert "causal" in details["note"]
+    assert "因果" in details["note"]
 
 
 @pytest.mark.asyncio
@@ -43,4 +43,4 @@ async def test_no_reference_is_explicit(fake_runner, repo, tmp_path):
     details = compare_run_details(repo, failed_run["run_id"])
     assert details["matched_reference"] is None
     assert details["timeline_diff"]["status"] == "INSUFFICIENT_REFERENCE"
-    assert "Insufficient" in details["note"]
+    assert "没有足够" in details["note"]

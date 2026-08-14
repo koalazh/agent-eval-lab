@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Cases</h1>
-{% if not cases %}<p class="muted">No Case revision has been persisted yet.</p>{% endif %}
+<h1>用例</h1>
+{% if not cases %}<p class="muted">还没有持久化的 Case 修订版本。</p>{% endif %}
 <table>
-  <tr><th>Case</th><th>Revision</th><th>Verifier</th><th>Fixture hash</th><th>Timeout</th></tr>
+  <tr><th>用例</th><th>修订版本</th><th>验证器</th><th>Fixture 哈希</th><th>超时时间</th></tr>
   {% for case in cases %}
   <tr>
     <td><strong>{{ case.id }}</strong><br>{{ case.prompt }}</td>
@@ -15,4 +15,3 @@
   {% endfor %}
 </table>
 {% endblock %}
-

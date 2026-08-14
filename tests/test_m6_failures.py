@@ -81,5 +81,5 @@ async def test_promotion_rejects_changed_source_fixture(tmp_path):
     run = (await Runner(repo, {"fake-fail": FakeAgentDriver("fake-fail", "fail")}).run_experiment(experiment))[0]
     source_fixture = experiment.suite.cases[0].fixture_path / "answer.txt"
     source_fixture.write_text("changed after run\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="no longer matches"):
+    with pytest.raises(ValueError, match="已不再匹配"):
         promote_failure(repo, run["failure_id"])

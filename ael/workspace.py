@@ -18,7 +18,7 @@ class WorkspaceManager:
 
     def create(self, fixture: Path, run_id: str) -> tuple[Path, dict[str, bytes]]:
         if not fixture.exists() or not fixture.is_dir():
-            raise ValueError(f"fixture directory does not exist: {fixture}")
+            raise ValueError(f"fixture 目录不存在：{fixture}")
         workspace = Path(tempfile.mkdtemp(prefix=f"{run_id}-", dir=self.workspace_root))
         shutil.copytree(fixture, workspace, dirs_exist_ok=True)
         return workspace, self.snapshot(workspace)
@@ -41,13 +41,13 @@ class WorkspaceManager:
                 try:
                     before_text = before[relative].decode("utf-8")
                 except UnicodeDecodeError:
-                    before_text = "<binary or non-UTF8 file>"
+                    before_text = "<二进制或非 UTF-8 文件>"
             after_text = ""
             if relative in after:
                 try:
                     after_text = after[relative].decode("utf-8")
                 except UnicodeDecodeError:
-                    after_text = "<binary or non-UTF8 file>"
+                    after_text = "<二进制或非 UTF-8 文件>"
             diff_lines.extend(
                 difflib.unified_diff(
                     before_text.splitlines(keepends=True),
@@ -62,7 +62,7 @@ class WorkspaceManager:
             "changed_files": changed,
             "added_files": added,
             "deleted_files": deleted,
-            "workspace_isolation": "host-local filesystem copy; not an OS/security sandbox",
+            "workspace_isolation": "host-local filesystem copy；不等于 OS/security sandbox",
         }
         (evidence_dir / "changes.json").write_text(
             json.dumps(redact(changes), indent=2, sort_keys=True), encoding="utf-8"

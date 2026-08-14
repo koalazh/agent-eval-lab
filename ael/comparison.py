@@ -199,7 +199,7 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
                 "variable_scope": None,
                 "timeline_diff": {"status": "INSUFFICIENT_REFERENCE"},
                 "first_meaningful_divergence": {"status": "NO_CLEAR_DIVERGENCE"},
-                "note": "Insufficient same-revision PASS reference; no trajectory attribution is made.",
+                "note": "没有足够接近且 revision 相同的 PASS reference；不会进行轨迹归因。",
             }
         )
         return result
@@ -220,7 +220,7 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
                 _events(repository, candidate),
                 _events(repository, reference),
             ),
-            "note": "Trajectory evidence is descriptive; it does not establish causal root cause.",
+            "note": "轨迹证据仅用于描述，不建立因果根因。",
         }
     )
     return result
@@ -316,5 +316,5 @@ def compare_experiments(repository: Repository, experiment_a: str, experiment_b:
         "matrix_b": matrix_report(runs_b),
         "differential_cases": rows,
         "case_revision_mismatches": mismatches,
-        "note": "All labels are deterministic descriptions; no causal probability is inferred.",
+        "note": "所有标签都是确定性的描述；系统不会推断因果概率。",
     }

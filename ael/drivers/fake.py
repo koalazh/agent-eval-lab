@@ -18,7 +18,7 @@ class FakeAgentDriver:
             supports_models=True,
             supports_controlled=True,
             controlled_support="full",
-            notes=("deterministic test driver",),
+            notes=("确定性测试 driver。",),
         )
         self._agent = Agent(
             id=agent_id,
@@ -36,7 +36,7 @@ class FakeAgentDriver:
             supports_models=True,
             supports_controlled=True,
             controlled_support="full",
-            notes=("deterministic test driver",),
+            notes=("确定性测试 driver。",),
         )
 
     def agent(self) -> Agent:
@@ -49,14 +49,14 @@ class FakeAgentDriver:
         if behavior == "timeout":
             await asyncio.sleep(run_context.timeout_seconds + 2)
         if behavior == "crash":
-            return DriverResult(exit_code=1, process_error="fake process crashed", stderr="fake crash")
+            return DriverResult(exit_code=1, process_error="测试进程崩溃", stderr="测试崩溃")
         events = [
-            ObservableEvent("message", name="fake", summary="started", source="native"),
+            ObservableEvent("message", name="fake", summary="已启动", source="native"),
             ObservableEvent("tool_call", name="bash", summary="test -f answer.txt", source="native"),
         ]
         answer = "pass\n" if behavior in {"pass", "jsonl"} else "fail\n"
         (Path(run_context.workspace) / "answer.txt").write_text(answer, encoding="utf-8")
-        events.append(ObservableEvent("file_change", name="answer.txt", summary="updated", source="native"))
+        events.append(ObservableEvent("file_change", name="answer.txt", summary="已更新", source="native"))
         if behavior == "jsonl":
             raw = [
                 {"type": "command_execution", "command": "pytest -q"},
@@ -69,12 +69,12 @@ class FakeAgentDriver:
         events.extend(
             [
                 ObservableEvent("command", name="pytest", summary="pytest -q", source="native"),
-                ObservableEvent("final", name="fake", summary="done", source="native"),
+                ObservableEvent("final", name="fake", summary="已完成", source="native"),
             ]
         )
         return DriverResult(
             exit_code=0,
-            stdout="fake agent completed",
+            stdout="测试智能体已完成",
             native_events=events,
             final_text="done",
             usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
@@ -93,4 +93,3 @@ class FakeAgentDriver:
             source="native",
             data=raw,
         )
-

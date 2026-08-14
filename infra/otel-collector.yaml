@@ -1,5 +1,5 @@
-# Optional local-only collector configuration.
-# AEL does not implement OTLP or export telemetry externally.
+# 可选的、仅限本机的 Collector 配置。
+# AEL 不实现 OTLP，也不会向外部导出遥测数据。
 receivers:
   otlp:
     protocols:
@@ -29,4 +29,3 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [debug]
-

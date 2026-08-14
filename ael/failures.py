@@ -56,19 +56,19 @@ def observe_failure(repository: Repository, run_id: str) -> str | None:
 def promote_failure(repository: Repository, failure_id: str) -> CaseSpec:
     failure = repository.get_failure(failure_id)
     if not failure:
-        raise ValueError(f"failure not found: {failure_id}")
+        raise ValueError(f"未找到失败记录：{failure_id}")
     source_run = repository.get_run(failure["source_run_id"])
     if not source_run:
-        raise ValueError("source Run is unavailable")
+        raise ValueError("源 Run 不可用")
     source_case = repository.get_case(source_run["case_id"], source_run["case_revision"])
     if not source_case:
-        raise ValueError("source Case revision is unavailable")
+        raise ValueError("源 Case revision 不可用")
     if hash_file_tree(source_case.fixture_path) != source_case.fixture_hash:
-        raise ValueError("source fixture no longer matches the persisted Case revision")
+        raise ValueError("source fixture 已不再匹配持久化的 Case revision")
     if source_case.source_path and source_case.source_path.exists():
         current_case = load_case(source_case.source_path)
         if current_case.revision != source_case.revision:
-            raise ValueError("source Case no longer matches the persisted revision")
+            raise ValueError("source Case 已不再匹配持久化的 revision")
     target_id = f"regression-{_safe_name(source_case.id)}-{failure_id.removeprefix('failure-')[:8]}"
     case_dir = repository.root / "cases" / "regression" / target_id
     fixture_dir = case_dir / "fixture"
@@ -112,7 +112,7 @@ def build_regression_experiment(
 ) -> ExperimentSpec:
     cases = repository.suite_cases("regression")
     if not cases:
-        raise ValueError("regression suite is empty")
+        raise ValueError("回归套件为空")
     return ExperimentSpec(
         id=experiment_id,
         suite=SuiteSpec("regression", "regression", tuple(cases)),

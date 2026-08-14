@@ -1,35 +1,35 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Failure Explorer</h1>
-<p><strong>Candidate run:</strong> <code>{{ explorer.run_id }}</code></p>
+<h1>失败分析器</h1>
+<p><strong>候选运行：</strong> <code>{{ explorer.run_id }}</code></p>
 <p>{{ explorer.note }}</p>
 <section>
-  <h2>Outcome diff</h2>
+  <h2>结果差异</h2>
   <pre>{{ explorer.candidate }}</pre>
   {% if explorer.matched_reference %}
-  <p><strong>Matched PASS reference:</strong> <code>{{ explorer.matched_reference.run_id }}</code></p>
+  <p><strong>匹配的 PASS 参考运行：</strong> <code>{{ explorer.matched_reference.run_id }}</code></p>
   {% else %}
-  <p class="unknown">No sufficient same-revision PASS reference. Trajectory attribution is withheld.</p>
+  <p class="unknown">没有足够接近且修订版本相同的 PASS 参考运行，因此不会进行轨迹归因。</p>
   {% endif %}
 </section>
 <section>
-  <h2>Artifact diff</h2>
+  <h2>产物差异</h2>
   <pre>{{ explorer.artifact_diff.diff }}</pre>
 </section>
 <section>
-  <h2>Timeline diff</h2>
+  <h2>时间线差异</h2>
   <pre>{{ explorer.timeline_diff }}</pre>
-  <p><strong>First meaningful divergence:</strong> {{ explorer.first_meaningful_divergence }}</p>
+  <p><strong>首次有意义的分歧：</strong> {{ explorer.first_meaningful_divergence }}</p>
 </section>
 <section>
-  <h2>Evidence coverage</h2>
+  <h2>证据覆盖</h2>
   <pre>{{ explorer.evidence_coverage }}</pre>
 </section>
 <section>
-  <h2>Diagnosis</h2>
+  <h2>诊断</h2>
   <pre>{{ diagnosis }}</pre>
   <form method="post" action="/runs/{{ explorer.run_id }}/follow-up">
-    <button type="submit">Create Follow-up Experiment Draft</button>
+    <button type="submit">创建后续实验草稿</button>
   </form>
 </section>
 {% endblock %}

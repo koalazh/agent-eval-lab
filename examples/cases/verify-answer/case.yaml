@@ -2,7 +2,7 @@ id: verify-answer-001
 fixture:
   path: fixture
 prompt: |
-  Update answer.txt so the verifier passes.
+  修改 answer.txt，使验证器通过。
 verify:
   command: test "$(cat answer.txt)" = "pass"
 limits:
