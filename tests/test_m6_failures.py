@@ -41,7 +41,7 @@ async def test_only_valid_task_failures_enter_failure_book(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_promote_copies_fixture_and_regression_suite_can_rerun(tmp_path):
+async def test_promote_pins_case_revision_and_regression_suite_can_rerun(tmp_path):
     repo = Repository(tmp_path)
     experiment = load_experiment(write_experiment(tmp_path))
     runner = Runner(repo, {"fake-fail": FakeAgentDriver("fake-fail", "fail")})
@@ -49,11 +49,13 @@ async def test_promote_copies_fixture_and_regression_suite_can_rerun(tmp_path):
     failure = repo.list_failures()[0]
 
     promoted = promote_failure(repo, failure["id"])
-    assert promoted.id.startswith("regression-case-1-")
+    assert promoted.id == "case-1"
     assert promoted.fixture_path.exists()
     assert (tmp_path / "cases" / "case-1" / "fixture" / "answer.txt").read_text() == "wrong\n"
+    assert not (tmp_path / "cases" / "regression").exists()
     assert repo.get_failure(failure["id"])["status"] == "REGRESSION_GUARDED"
     assert repo.suite_cases("regression")[0].id == promoted.id
+    assert repo.suite_cases("regression")[0].revision == experiment.suite.cases[0].revision
 
     regression_experiment = build_regression_experiment(
         repo,
@@ -83,3 +85,23 @@ async def test_promotion_rejects_changed_source_fixture(tmp_path):
     source_fixture.write_text("changed after run\n", encoding="utf-8")
     with pytest.raises(ValueError, match="已不再匹配"):
         promote_failure(repo, run["failure_id"])
+
+
+@pytest.mark.asyncio
+async def test_repeated_verifier_failure_is_clustered_and_reproduced(tmp_path):
+    repo = Repository(tmp_path)
+    experiment = load_experiment(write_experiment(tmp_path))
+    experiment = experiment.__class__(
+        id="repeat-failures",
+        suite=experiment.suite,
+        variants=experiment.variants,
+        trials=2,
+        max_concurrency=1,
+        source_path=experiment.source_path,
+    )
+    results = await Runner(repo, {"fake-fail": FakeAgentDriver("fake-fail", "fail")}).run_experiment(experiment)
+    assert len(results) == 2
+    failures = repo.list_failures()
+    assert len(failures) == 1
+    assert failures[0]["status"] == "REPRODUCED"
+    assert failures[0]["details"]["run_count"] == 2

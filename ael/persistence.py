@@ -108,7 +108,17 @@ class Repository:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS failure_runs (
+                    failure_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    first_seen_at TEXT NOT NULL,
+                    PRIMARY KEY (failure_id, run_id)
+                );
                 """
+            )
+            db.execute(
+                "INSERT OR IGNORE INTO failure_runs(failure_id, run_id, first_seen_at) "
+                "SELECT id, source_run_id, created_at FROM failures"
             )
 
     def save_agent(self, agent: Agent) -> None:
@@ -189,7 +199,11 @@ class Repository:
                 reference if isinstance(reference, dict) else {"id": reference, "revision": None}
                 for reference in raw_refs
             ]
-            if not any(reference.get("id") == case.id for reference in refs):
+            if not any(
+                reference.get("id") == case.id
+                and reference.get("revision") == case.revision
+                for reference in refs
+            ):
                 refs.append({"id": case.id, "revision": case.revision})
             db.execute(
                 "INSERT OR REPLACE INTO suites(id, kind, case_refs_json) VALUES (?, ?, ?)",
@@ -412,6 +426,128 @@ class Repository:
                     now,
                 ),
             )
+            db.execute(
+                "INSERT OR IGNORE INTO failure_runs(failure_id, run_id, first_seen_at) VALUES (?, ?, ?)",
+                (failure_id, source_run_id, now),
+            )
+
+    def upsert_failure_cluster(
+        self,
+        *,
+        signature: str,
+        source_run_id: str,
+        details: dict[str, Any],
+    ) -> str:
+        now = now_iso()
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM failures WHERE signature=?", (signature,)).fetchone()
+            if row is None:
+                failure_id = f"failure-{signature[:16]}"
+                aggregate = {
+                    **details,
+                    "source_run_id": source_run_id,
+                    "run_ids": [source_run_id],
+                    "run_count": 1,
+                    "variant_ids": [details.get("variant_id")] if details.get("variant_id") else [],
+                    "experiment_ids": [details.get("experiment_id")] if details.get("experiment_id") else [],
+                }
+                db.execute(
+                    """
+                    INSERT INTO failures(id, source_run_id, status, signature, details_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        failure_id,
+                        source_run_id,
+                        FailureStatus.OBSERVED.value,
+                        signature,
+                        json.dumps(redact(aggregate), sort_keys=True, default=str),
+                        now,
+                        now,
+                    ),
+                )
+            else:
+                failure_id = str(row["id"])
+                aggregate = json.loads(row["details_json"])
+                run_ids = list(aggregate.get("run_ids") or [])
+                if source_run_id not in run_ids:
+                    run_ids.append(source_run_id)
+                variant_ids = list(aggregate.get("variant_ids") or [])
+                if details.get("variant_id") and details["variant_id"] not in variant_ids:
+                    variant_ids.append(details["variant_id"])
+                experiment_ids = list(aggregate.get("experiment_ids") or [])
+                if details.get("experiment_id") and details["experiment_id"] not in experiment_ids:
+                    experiment_ids.append(details["experiment_id"])
+                aggregate.update(
+                    {
+                        "run_ids": run_ids,
+                        "run_count": len(run_ids),
+                        "variant_ids": variant_ids,
+                        "experiment_ids": experiment_ids,
+                        "latest_run_id": source_run_id,
+                    }
+                )
+                status = row["status"]
+                if status == FailureStatus.OBSERVED.value and len(run_ids) >= 2:
+                    status = FailureStatus.REPRODUCED.value
+                db.execute(
+                    "UPDATE failures SET status=?, details_json=?, updated_at=? WHERE id=?",
+                    (status, json.dumps(redact(aggregate), sort_keys=True, default=str), now, failure_id),
+                )
+            db.execute(
+                "INSERT OR IGNORE INTO failure_runs(failure_id, run_id, first_seen_at) VALUES (?, ?, ?)",
+                (failure_id, source_run_id, now),
+            )
+        return failure_id
+
+    def get_failure_by_signature(self, signature: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM failures WHERE signature=?", (signature,)).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["details"] = json.loads(result.pop("details_json"))
+        self._enrich_failure_details(result["details"], [result["source_run_id"]])
+        return result
+
+    def failure_for_run(self, run_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT f.* FROM failures f
+                JOIN failure_runs fr ON fr.failure_id=f.id
+                WHERE fr.run_id=?
+                ORDER BY f.created_at DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["details"] = json.loads(result.pop("details_json"))
+        self._enrich_failure_details(result["details"], [run_id])
+        return result
+
+    def _enrich_failure_details(self, details: dict[str, Any], run_ids: list[str]) -> None:
+        if not run_ids:
+            return
+        placeholders = ",".join("?" for _ in run_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"SELECT id, experiment_id, case_id, variant_id FROM runs WHERE id IN ({placeholders})",
+                tuple(run_ids),
+            ).fetchall()
+        if not rows:
+            return
+        details.setdefault("case_id", rows[0]["case_id"])
+        details.setdefault("experiment_id", rows[0]["experiment_id"])
+        details.setdefault("variant_id", rows[0]["variant_id"])
+        if not details.get("variant_ids"):
+            details["variant_ids"] = sorted({row["variant_id"] for row in rows})
+        if not details.get("experiment_ids"):
+            details["experiment_ids"] = sorted({row["experiment_id"] for row in rows})
+        details.setdefault("run_ids", list(run_ids))
+        details.setdefault("run_count", len(run_ids))
 
     def get_failure(self, failure_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
@@ -420,6 +556,17 @@ class Repository:
             return None
         result = dict(row)
         result["details"] = json.loads(result.pop("details_json"))
+        with self._connect() as db:
+            result["run_ids"] = [
+                item["run_id"]
+                for item in db.execute(
+                    "SELECT run_id FROM failure_runs WHERE failure_id=? ORDER BY first_seen_at, run_id",
+                    (failure_id,),
+                )
+            ]
+        self._enrich_failure_details(result["details"], result["run_ids"])
+        result["details"].setdefault("run_ids", result["run_ids"])
+        result["details"].setdefault("run_count", len(result["run_ids"]))
         return result
 
     def list_failures(self) -> list[dict[str, Any]]:
@@ -427,6 +574,18 @@ class Repository:
             rows = [dict(row) for row in db.execute("SELECT * FROM failures ORDER BY created_at DESC")]
         for result in rows:
             result["details"] = json.loads(result.pop("details_json"))
+            with self._connect() as db:
+                run_ids = [
+                    item["run_id"]
+                    for item in db.execute(
+                        "SELECT run_id FROM failure_runs WHERE failure_id=? ORDER BY first_seen_at, run_id",
+                        (result["id"],),
+                    )
+                ]
+            result["run_ids"] = run_ids
+            self._enrich_failure_details(result["details"], run_ids)
+            result["details"].setdefault("run_ids", run_ids)
+            result["details"].setdefault("run_count", len(run_ids))
         return rows
 
     def update_failure_status(self, failure_id: str, status: FailureStatus) -> None:

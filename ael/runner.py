@@ -109,6 +109,12 @@ class Runner:
             endpoint = os.environ.get("AEL_OTEL_ENDPOINT")
             if endpoint:
                 env["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
+        case_prompt = case.prompt
+        if variant.harness_config.get("verification_gate") is True:
+            case_prompt += (
+                "\n\nBefore reporting completion, run the complete test suite, inspect every "
+                "failure it reveals, and only then finish the task."
+            )
         context = RunContext(
             run_id=run_id,
             experiment_id=experiment.id,
@@ -120,7 +126,7 @@ class Runner:
             timeout_seconds=case.timeout_seconds,
             env=env,
             observation_profile=variant.observation_profile,
-            case_prompt=case.prompt,
+            case_prompt=case_prompt,
         )
         result = DriverResult(process_error="driver 未返回结果")
         status = RunStatus.INVALID
@@ -281,4 +287,9 @@ class Runner:
             self.repository.set_experiment_status(experiment.id, "ERROR")
             raise
         self.repository.set_experiment_status(experiment.id, "COMPLETED")
+        source_run_id = experiment.metadata.get("follow_up_of_run")
+        if source_run_id:
+            from .failures import reconcile_follow_up
+
+            reconcile_follow_up(self.repository, experiment.id, str(source_run_id))
         return results

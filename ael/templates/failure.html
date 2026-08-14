@@ -4,9 +4,11 @@
 <section class="grid">
   <div class="metric"><span>Runs</span><strong>{{ failure.details.get("run_count", 1) }}</strong></div>
   <div class="metric"><span>Cases</span><strong>{{ failure.details.get("case_id", "unknown") }}</strong></div>
-  <div class="metric"><span>Variants</span><strong>{{ failure.details.get("variant_id", "unknown") }}</strong></div>
+  <div class="metric"><span>Variants</span><strong>{{ failure.details.get("variant_ids", [failure.details.get("variant_id", "unknown")])|join(", ") }}</strong></div>
   <div class="metric"><span>Source run</span><strong><a href="/runs/{{ failure.source_run_id }}">{{ failure.source_run_id[:12] }}</a></strong></div>
 </section>
+<section><h2>Linked Runs</h2><p>{% for run_id in failure.details.get("run_ids", [failure.source_run_id]) %}<a href="/runs/{{ run_id }}"><code>{{ run_id[:12] }}</code></a>{% if not loop.last %} · {% endif %}{% endfor %}</p><p class="muted">Signature: {{ failure.signature }}</p></section>
+{% if failure.details.get("lifecycle_transition") %}<section><p class="pill">{{ failure.details.get("lifecycle_transition") }}</p><p>Follow-up experiment: <a href="/experiments/{{ failure.details.get("follow_up_experiment_id") }}">{{ failure.details.get("follow_up_experiment_id") }}</a></p></section>{% endif %}
 <section><h2>Evidence</h2><p>{{ explorer.note or "Failure evidence is available in the Explorer." }}</p>{% if explorer %}<a class="button" href="/runs/{{ explorer.run_id }}/explorer">Open Failure Explorer</a>{% endif %}</section>
 {% if failure.status != "REGRESSION_GUARDED" %}<section><form method="post" action="/failures/{{ failure.id }}/promote"><button type="submit">Pin Case revision to Regression Suite</button></form></section>{% endif %}
 {% endblock %}

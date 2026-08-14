@@ -1,16 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>失败记录</h1>
-<p class="muted">只有有效任务失败（进程完成且 verifier 返回 FAIL）才会进入失败记录簿。</p>
+<h1>Failure Patterns</h1>
+<p class="muted">一个 pattern 可以关联多个真实 Runs；只有进程完成且 verifier 返回 FAIL 才会进入记录簿。</p>
 {% if not failures %}<p>还没有观察到失败。</p>{% endif %}
 <table>
-  <tr><th>失败记录</th><th>状态</th><th>来源运行</th><th>签名</th></tr>
+  <tr><th>Pattern</th><th>Status</th><th>Runs</th><th>Cases / Variants</th><th>Lifecycle</th></tr>
   {% for failure in failures %}
   <tr>
     <td><a href="/failures/{{ failure.id }}"><code>{{ failure.id }}</code></a></td>
     <td>{{ failure.status }}</td>
-    <td><a href="/runs/{{ failure.source_run_id }}"><code>{{ failure.source_run_id[:12] }}</code></a></td>
-    <td>{{ failure.signature }}</td>
+    <td>{{ failure.details.get("run_count", 1) }}</td>
+    <td>{{ failure.details.get("case_id", "unknown") }} · {{ failure.details.get("variant_ids", [])|join(", ") }}</td>
+    <td>{{ failure.details.get("lifecycle_transition", "OBSERVED") }}</td>
   </tr>
   {% endfor %}
 </table>

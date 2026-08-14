@@ -123,14 +123,22 @@ AEL 聚焦于矩阵执行、差异比较、证据融合、失败调查、失败�
 
 确定性的 Failure Explorer（失败分析器）会先检查 Case revision，再选择最接近的 PASS 参考运行，并展示 SAME/CHANGED/UNKNOWN 变量、`CONTROLLED`/`PARTIAL`/`DESCRIPTIVE` 置信度、verifier/workspace 证据、归一化锚点时间线和首次有意义的分歧。如果参考运行或锚点证据不足，系统会明确说明，不会编造因果根因。
 
-Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用一个 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。后续操作会在同一 Case revision 上创建需要用户确认的 `DRAFT` experiment，并记录拟隔离的 independent variable。
+Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用一个 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。Failure Explorer 的 Follow-up Builder 会在同一 Case revision 上生成可编辑的 baseline/candidate 两个 Variant，真正写入 `verification_gate`、`run_mode` 或 Agent 变化后再运行，不需要用户离开 AEL 修改 YAML。
 
 ## 失败记录簿（Failure Book）
 
-只有进程已完成且 verifier 返回 FAIL 的记录才会进入失败记录簿，并以 `OBSERVED` 开始。
-Failure clustering、可运行的 follow-up、`FIXED/REGRESSED` 和按 `case_id + revision`
-直接 pin 到 Regression Suite 属于后续 Phase C；当前文档不把旧的逐 Run failure row
-或复制 fixture 行为当作完成能力。
+只有进程已完成且 verifier 返回 FAIL 的记录才会进入失败记录簿，并以 `OBSERVED` 开始；相同 Case revision 和 verifier signature 的重复失败会归并到同一 Failure Pattern，关联多个 Runs，并在重复出现后变为 `REPRODUCED`。
+
+Phase C 的真实 Web 验收记录（2026-08-14）：从 Failure Explorer 打开 Follow-up Builder，保持
+Claude Code、Model、3 个 Golden Case 和 `controlled` observation 不变，生成
+`verification_gate=false` 的 baseline 与 `verification_gate=true` 的 candidate。第一次真实复验实验
+`follow-up-golden-phase-a-final-75ae939d-f0dab3c6-6ede65` 完成 12 个 Claude Code Runs；baseline
+全部 PASS，candidate 在 `premature-completion` 上出现 1 PASS / 1 FAIL，因此系统没有虚假标记为修复。
+第二次将 trials 编辑为 1 的真实复验实验
+`follow-up-golden-phase-a-final-75ae939d-f0dab3c6-18582b` 完成 6 个 Runs，两个 Variant 的 3 个
+Case 均 PASS；原始 Failure `failure-f0dab3c6f17a4447b392513d2ccc26a4` 随之显示
+`FIXED`，再通过页面按钮 pin 后显示 `REGRESSION_GUARDED`。Regression Suite 直接保存
+`case_id=premature-completion + revision=b71c21621ce0a54f59774ab63251ecc9947973f150a42a145ab81d48575ed7d5`，没有复制 fixture。
 
 ## 可运行示例
 

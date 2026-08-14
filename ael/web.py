@@ -236,12 +236,67 @@ def create_app(root: str | Path = ".") -> FastAPI:
             reference_raw=_raw_events(repository.get_run(reference_id)) if reference_id else "",
         )
 
-    @app.post("/runs/{run_id}/follow-up")
-    async def follow_up_page(request: Request, run_id: str):
+    @app.get("/runs/{run_id}/follow-up/new", response_class=HTMLResponse)
+    async def follow_up_builder_page(request: Request, run_id: str):
         try:
-            experiment = create_follow_up_experiment(repository, run_id)
+            draft = create_follow_up_experiment(repository, run_id, save=False)
         except ValueError as exc:
             return HTMLResponse(str(exc), status_code=400)
+        return render(
+            request,
+            "follow_up.html",
+            title="Follow-up Experiment",
+            run_id=run_id,
+            draft=draft,
+            agents=agent_rows(),
+            error=None,
+        )
+
+    @app.post("/runs/{run_id}/follow-up")
+    async def follow_up_page(request: Request, run_id: str):
+        form = {
+            key: values
+            for key, values in parse_qs(
+                (await request.body()).decode("utf-8"), keep_blank_values=True
+            ).items()
+        }
+        independent_variable = (form.get("independent_variable") or ["verification_gate"])[-1]
+        candidate_agent_id = (form.get("candidate_agent_id") or [None])[-1] or None
+        try:
+            if independent_variable == "agent" and candidate_agent_id:
+                available = {
+                    row["agent"]["id"]
+                    for row in agent_rows()
+                    if row["capabilities"].get("available")
+                }
+                if candidate_agent_id not in available:
+                    raise ValueError(f"Candidate Agent 不可用：{candidate_agent_id}")
+            experiment = create_follow_up_experiment(
+                repository,
+                run_id,
+                independent_variable=independent_variable,
+                candidate_agent_id=candidate_agent_id,
+                trials=int((form.get("trials") or ["2"])[-1]),
+                max_concurrency=int((form.get("max_concurrency") or ["2"])[-1]),
+                save=False,
+            )
+        except (TypeError, ValueError) as exc:
+            try:
+                draft = create_follow_up_experiment(repository, run_id, save=False)
+            except ValueError:
+                return HTMLResponse(str(exc), status_code=400)
+            return render(
+                request,
+                "follow_up.html",
+                title="Follow-up Experiment",
+                run_id=run_id,
+                draft=draft,
+                agents=agent_rows(),
+                error=str(exc),
+                _status_code=400,
+            )
+        repository.save_experiment(experiment, status="PENDING", follow_up_of=run_id)
+        background_runs[experiment.id] = asyncio.create_task(run_in_background(experiment))
         return RedirectResponse(f"/experiments/{experiment.id}", status_code=303)
 
     @app.get("/failures", response_class=HTMLResponse)
@@ -400,7 +455,13 @@ def _build_experiment(
 def _variant_label(variant: dict[str, Any]) -> str:
     agent = variant.get("agent_id") or variant.get("id") or "Variant"
     model = variant.get("model") or "default"
-    return f"{agent} / {('Default configured' if str(model).lower() in {'default', 'unknown'} else model)}"
+    label = f"{agent} / {('Default configured' if str(model).lower() in {'default', 'unknown'} else model)}"
+    config = variant.get("harness_config") or {}
+    if config.get("verification_gate") is True:
+        label += " · verification_gate=on"
+    elif config.get("verification_gate") is False:
+        label += " · verification_gate=off"
+    return label
 
 
 def _is_within(root: Path, candidate: Path) -> bool:

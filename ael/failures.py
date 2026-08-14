@@ -2,20 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from .cases import CaseSpec, ExperimentSpec, SuiteSpec, load_case
 from .hashing import canonical_json, hash_file_tree, sha256_text
 from .models import AgentVariant, FailureStatus
 from .persistence import Repository
-
-
-def _safe_name(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "case"
 
 
 def observe_failure(repository: Repository, run_id: str) -> str | None:
@@ -29,10 +22,27 @@ def observe_failure(repository: Repository, run_id: str) -> str | None:
             changes = json.loads(workspace.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             changes = {}
+    verifier = run.get("verifier") or {}
+    verifier_text = " ".join(
+        str(verifier.get(key) or "") for key in ("stdout", "stderr", "error")
+    )
+    verifier_text = re.sub(r"/(?:private/)?var/folders/[^\s:]+", "<workspace>", verifier_text)
+    verifier_text = re.sub(r"/Users/[^\s:]+", "<repo>", verifier_text)
+    verifier_text = re.sub(r"line \d+", "line", verifier_text)
+    verifier_text = re.sub(r"\b\d+(?:\.\d+)?(?:ms|s)\b", "<duration>", verifier_text)
+    verifier_text = re.sub(
+        r"\b\d+\s+(passed|failed|deselected|errors?)\b",
+        r"<count> \1",
+        verifier_text,
+    )
+    verifier_text = re.sub(r"\s+", " ", verifier_text).strip()
     details = {
         "source_run_id": run_id,
+        "experiment_id": run["experiment_id"],
         "case_id": run["case_id"],
         "case_revision": run["case_revision"],
+        "variant_id": run["variant_id"],
+        "verifier_signature_text": verifier_text,
         "run_status": run["run_status"],
         "task_outcome": run["task_outcome"],
         "run_dir": run["run_dir"],
@@ -42,14 +52,18 @@ def observe_failure(repository: Repository, run_id: str) -> str | None:
     signature = sha256_text(
         canonical_json(
             {
+                "case_id": run["case_id"],
                 "case_revision": run["case_revision"],
-                "changed_files": changes.get("changed_files", []),
                 "task_outcome": run["task_outcome"],
+                "verifier": verifier_text,
             }
         )
     )
-    failure_id = f"failure-{run_id}"
-    repository.save_failure(failure_id, run_id, signature, details)
+    failure_id = repository.upsert_failure_cluster(
+        signature=signature,
+        source_run_id=run_id,
+        details=details,
+    )
     return failure_id
 
 
@@ -69,37 +83,52 @@ def promote_failure(repository: Repository, failure_id: str) -> CaseSpec:
         current_case = load_case(source_case.source_path)
         if current_case.revision != source_case.revision:
             raise ValueError("source Case 已不再匹配持久化的 revision")
-    target_id = f"regression-{_safe_name(source_case.id)}-{failure_id.removeprefix('failure-')[:8]}"
-    case_dir = repository.root / "cases" / "regression" / target_id
-    fixture_dir = case_dir / "fixture"
-    case_dir.mkdir(parents=True, exist_ok=False)
-    shutil.copytree(source_case.fixture_path, fixture_dir)
-    verifier = source_case.verifier.to_dict()
-    if source_case.verifier.python:
-        grader_source = Path(source_case.verifier.python)
-        if not grader_source.is_absolute() and source_case.source_path:
-            grader_source = source_case.source_path.parent / grader_source
-        grader_target = case_dir / grader_source.name
-        shutil.copy2(grader_source, grader_target)
-        verifier = {"python": grader_target.name}
-    case_yaml = {
-        "id": target_id,
-        "fixture": {"path": "fixture"},
-        "prompt": source_case.prompt,
-        "verify": verifier,
-        "constraints": source_case.constraints,
-        "limits": {"timeout_seconds": source_case.timeout_seconds},
-    }
-    source_yaml = case_dir / "case.yaml"
-    source_yaml.write_text(yaml.safe_dump(case_yaml, sort_keys=False), encoding="utf-8")
-    promoted = load_case(source_yaml)
-    repository.save_case(promoted)
-    repository.append_suite_case("regression", "regression", promoted)
+    repository.append_suite_case("regression", "regression", source_case)
     details = dict(failure["details"])
-    details["regression_case_id"] = promoted.id
+    details["regression_case_id"] = source_case.id
+    details["regression_case_revision"] = source_case.revision
     repository.update_failure_details(failure_id, details)
     repository.update_failure_status(failure_id, FailureStatus.REGRESSION_GUARDED)
-    return promoted
+    return source_case
+
+
+def reconcile_follow_up(repository: Repository, experiment_id: str, source_run_id: str) -> str | None:
+    failure = repository.failure_for_run(source_run_id)
+    definition = repository.read_experiment_definition(experiment_id) or {}
+    metadata = definition.get("metadata") or {}
+    candidate_id = metadata.get("candidate_variant_id")
+    if not failure or not candidate_id:
+        return None
+    candidate_runs = [
+        run
+        for run in repository.list_runs(experiment_id)
+        if run["variant_id"] == candidate_id and run["run_status"] == "COMPLETED"
+    ]
+    if not candidate_runs:
+        return None
+    candidate_outcomes = [run["task_outcome"] for run in candidate_runs]
+    transition = None
+    if failure["details"].get("task_outcome") == "FAIL" and all(outcome == "PASS" for outcome in candidate_outcomes):
+        transition = "FIXED"
+        status = FailureStatus.FIXED
+    elif failure["details"].get("task_outcome") == "PASS" and any(outcome == "FAIL" for outcome in candidate_outcomes):
+        transition = "REGRESSED"
+        status = FailureStatus.REPRODUCED
+    else:
+        return None
+    details = dict(failure["details"])
+    details.update(
+        {
+            "follow_up_experiment_id": experiment_id,
+            "baseline_variant_id": metadata.get("baseline_variant_id"),
+            "candidate_variant_id": candidate_id,
+            "candidate_outcomes": candidate_outcomes,
+            "lifecycle_transition": transition,
+        }
+    )
+    repository.update_failure_details(failure["id"], details)
+    repository.update_failure_status(failure["id"], status)
+    return transition
 
 
 def build_regression_experiment(

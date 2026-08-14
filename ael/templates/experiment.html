@@ -20,10 +20,10 @@
     <tr>
       <td><strong>{{ row.case_id }}</strong>{% if row.differential %}<br><span class="DIFFERENTIAL">DIFFERENTIAL</span>{% endif %}</td>
       {% for column in matrix.columns %}
-      {% set cell = row.cells.get(column.id) %}
+        {% set cell = row.cells.get(column.id) %}
       <td>
         {% if cell and cell.run_ids %}
-          {% set target = "/runs/" ~ cell.run_ids[0] ~ ("/explorer" if cell.fails else "") %}
+          {% set target = "/runs/" ~ cell.target_run_id ~ ("/explorer" if cell.fails else "") %}
           <a class="matrix-cell {{ cell.label }}" href="{{ target }}">
             <strong>{{ cell.display }}</strong><small class="{{ cell.classification }}">{{ cell.classification }}{% if cell.differential %} · DIFFERENTIAL{% endif %}</small>
           </a>

@@ -58,12 +58,26 @@ def matrix_report(runs: list[dict[str, Any]]) -> dict[str, Any]:
         case_summaries = []
         for variant_id in variant_ids:
             summary = trial_summary(groups.get((case_id, variant_id), []))
+            cell_runs = run_groups.get((case_id, variant_id), [])
+            target_run = next(
+                (
+                    run
+                    for run in cell_runs
+                    if run.get("task_outcome", run.get("outcome")) == TaskOutcome.FAIL.value
+                ),
+                cell_runs[0] if cell_runs else None,
+            )
             summary = {
                 **summary,
                 "run_ids": [
                     run["id"] if "id" in run else run.get("run_id")
-                    for run in run_groups.get((case_id, variant_id), [])
+                    for run in cell_runs
                 ],
+                "target_run_id": (
+                    target_run.get("id")
+                    if target_run and "id" in target_run
+                    else target_run.get("run_id") if target_run else None
+                ),
             }
             cells[variant_id] = summary
             if summary["total"]:

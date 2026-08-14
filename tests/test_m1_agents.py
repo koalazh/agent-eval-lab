@@ -15,13 +15,14 @@ def test_trial_classification_is_explicit():
 def test_matrix_report_groups_case_variant_trials():
     report = matrix_report(
         [
-            {"case_id": "case", "variant_id": "a", "task_outcome": "PASS"},
-            {"case_id": "case", "variant_id": "a", "task_outcome": "FAIL"},
-            {"case_id": "case", "variant_id": "b", "task_outcome": "PASS"},
+            {"id": "pass-id", "case_id": "case", "variant_id": "a", "task_outcome": "PASS"},
+            {"id": "fail-id", "case_id": "case", "variant_id": "a", "task_outcome": "FAIL"},
+            {"id": "other-id", "case_id": "case", "variant_id": "b", "task_outcome": "PASS"},
         ]
     )
     assert report["runs"] == 3
     assert report["rows"][0]["classification"] == "FLAKY"
+    assert report["matrix_rows"][0]["cells"]["a"]["target_run_id"] == "fail-id"
 
 
 def test_matrix_report_accepts_runner_summaries():

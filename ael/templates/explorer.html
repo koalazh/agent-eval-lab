@@ -75,6 +75,6 @@
   <p><strong>Counter-evidence / Unknown</strong></p>
   <ul>{% for item in diagnosis.counter_evidence + diagnosis.unknowns %}<li>{{ item }}</li>{% endfor %}</ul>
   <p><strong>Suggested engineering change:</strong> {{ diagnosis.suggested_improvement }}</p>
-  <form method="post" action="/runs/{{ explorer.run_id }}/follow-up"><button type="submit">Create editable follow-up</button></form>
+  <a class="button" href="/runs/{{ explorer.run_id }}/follow-up/new">Create editable follow-up</a>
 </section>
 {% endblock %}
