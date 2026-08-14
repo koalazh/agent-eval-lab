@@ -57,6 +57,25 @@ def test_python_verifier_content_changes_case_revision(tmp_path):
     assert first.revision != second.revision
 
 
+def test_case_revision_ignores_generated_python_cache(tmp_path):
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    case_kwargs = dict(
+        id="stable-case",
+        prompt="check it",
+        fixture_path=fixture,
+        verifier=VerifierSpec(command="true"),
+        source_path=tmp_path / "case.yaml",
+    )
+    first = CaseSpec(**case_kwargs)
+    cache = fixture / "__pycache__"
+    cache.mkdir()
+    (cache / "module.cpython-313.pyc").write_bytes(b"generated cache")
+    second = CaseSpec(**case_kwargs)
+    assert first.revision == second.revision
+
+
 @pytest.mark.asyncio
 async def test_m0_case_run_verify_persist(fake_runner, repo, tmp_path):
     experiment = make_experiment(tmp_path, "fake-pass", "pass")
@@ -73,6 +92,20 @@ async def test_m0_case_run_verify_persist(fake_runner, repo, tmp_path):
     assert (evidence / "workspace" / "diff.patch").exists()
     assert (evidence / "verifier" / "result.json").exists()
     assert not list((repo.ael_dir / "workspaces").iterdir())
+
+
+def test_execution_workspace_is_outside_repository(repo):
+    from ael.workspace import WorkspaceManager
+
+    fixture = repo.root / "fixture"
+    fixture.mkdir()
+    (fixture / "file.txt").write_text("fixture\n", encoding="utf-8")
+    manager = WorkspaceManager(repo.ael_dir)
+    workspace, _ = manager.create(fixture, "workspace-boundary")
+    try:
+        assert repo.root not in workspace.parents
+    finally:
+        manager.cleanup(workspace)
 
 
 @pytest.mark.asyncio

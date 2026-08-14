@@ -153,6 +153,27 @@ def load_case(path: str | Path) -> CaseSpec:
     )
 
 
+def discover_case_paths(root: str | Path) -> list[Path]:
+    """Find case definitions that the Web builder can offer without YAML editing."""
+    base = Path(root).resolve()
+    candidates = [
+        *base.glob("examples/cases/*/case.yaml"),
+        *base.glob("cases/*/case.yaml"),
+        *base.glob("cases/*/*/case.yaml"),
+    ]
+    discovered: set[Path] = set()
+    for path in candidates:
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(base)
+        except ValueError:
+            continue
+        discovered.add(resolved)
+    return sorted(discovered)
+
+
 def _variant_from_raw(raw: dict[str, Any], index: int):
     from .models import AgentVariant, ObservationProfile, RunMode
 

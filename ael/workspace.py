@@ -15,11 +15,14 @@ class WorkspaceManager:
         self.evidence_root = evidence_root
         self.workspace_root = evidence_root / "workspaces"
         self.workspace_root.mkdir(parents=True, exist_ok=True)
+        # Keep the execution copy outside the repository so CLIs that discover
+        # a parent Git root cannot edit the source fixture by accident.
+        self.execution_root = Path(tempfile.mkdtemp(prefix="ael-workspaces-"))
 
     def create(self, fixture: Path, run_id: str) -> tuple[Path, dict[str, bytes]]:
         if not fixture.exists() or not fixture.is_dir():
             raise ValueError(f"fixture 目录不存在：{fixture}")
-        workspace = Path(tempfile.mkdtemp(prefix=f"{run_id}-", dir=self.workspace_root))
+        workspace = Path(tempfile.mkdtemp(prefix=f"{run_id}-", dir=self.execution_root))
         shutil.copytree(fixture, workspace, dirs_exist_ok=True)
         return workspace, self.snapshot(workspace)
 

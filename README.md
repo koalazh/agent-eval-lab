@@ -45,13 +45,36 @@ AEL 将原生输出和归一化事件与验证器真值分开保存：
     uv run ael agents --root .
     uv run ael run examples/experiments/live-smoke.yaml --root .
 
+Phase A 的正常产品路径不需要手写 Experiment YAML：
+
+    uv run ael ui --root . --host 127.0.0.1 --port 8713
+
+然后打开 `http://127.0.0.1:8713/experiments/new`，选择 `parser-boundary`、
+`premature-completion`、`state-reset`，勾选当前可用的真实 Agent，填写实际
+Model/Provider（或保留 `Default configured`），设置 trials/concurrency，点击
+`Run experiment`。实验详情页的主体是 Case × Variant 矩阵；每个 cell 都链接到
+对应真实 Run。不可用的 Agent 会保持 disabled，不会被当作验收证据。
+
 仓库中不会保存凭据。缺失 CLI、provider（提供方）不可用、认证错误或速率限制会记录为基础设施/进程证据，不会被提升为 Agent 任务失败。
+
+Phase A 的真实验收记录（2026-08-14）：实验 `golden-phase-a-final-75ae939d` 从这个 Web
+Builder 创建，包含 3 个 Case、Codex / Claude Code / Hermes 3 个真实 Variant、2 trials，
+共 18 个 Run；18 个 Run 都完成了进程和 verifier 判定，最终 17 PASS / 1 FAIL。二维矩阵中
+`premature-completion` 为 DIFFERENTIAL：Codex 2/2 PASS、Hermes 2/2 PASS、Claude Code
+1/2 PASS；另外两个 Case 均为 3 个 Variant 稳定通过。这个 Case 的 visible targeted/full
+suite 都通过后，Claude 在 hidden valid-empty-cursor boundary 上失败，证据保存在对应 Run
+的 verifier/workspace/native 目录中。实际 execution workspace 位于仓库外临时目录，Golden
+fixture 在整次真实实验后保持原始 revision。
 
 ## ObservationProfile 与 OTel
 
 Run 默认使用 `minimal` 观察配置。`minimal` 和 `telemetry` 保留归一化行为摘要，但会省略结构化 prompt（提示词）、tool arguments（工具参数）、tool results（工具结果）和 transcript（转录）字段；只有显式选择 `deep` 才会保留这些字段，并继续进行凭据脱敏。每个 Run 都会在 fingerprint 中记录 ObservationProfile。
 
-可选遥测通过单次运行的 OpenTelemetry resource attributes 注入，绝不修改用户全局 Agent 配置。示例 Collector 配置位于 `infra/otel-collector.yaml`，只绑定 localhost 并导出到本地 debug exporter。没有 Collector 时 AEL 仍然可以运行，doctor 会显示 `NOT_FOUND`。
+Phase B 的 OTel vertical slice 正在实现；在它通过真实 Claude 验收前，不能把当前代码当作
+完成能力。AEL 会注入单次运行
+的 resource attributes，绝不修改用户全局 Agent 配置。`infra/otel-collector.yaml`
+保持 local-only；Collector → 持久化 ingest → UI 的真实 Claude vertical slice 属于
+Phase B，不能用“环境变量已设置”或 debug exporter 文件替代验收。
 
 对于 Claude Code，只有提供 `AEL_OTEL_ENDPOINT` 时，`telemetry` 才会通过单次运行环境启用 metrics/logs；`deep` 还会显式打开 prompt 和 tool payload 字段。默认仍是 `minimal`。
 
@@ -87,7 +110,10 @@ Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整�
 
 ## 失败记录簿（Failure Book）
 
-只有进程已完成且 verifier 返回 FAIL 的记录才会进入失败记录簿，并以 `OBSERVED` 开始。用户可以将其提升为 `REGRESSION_GUARDED`；AEL 会复制 fixture 和 Python grader，创建新的 Case revision，加入 Regression Suite，同时保持源 Case 不变。之后可以从这个持久化 Suite 构造实验并用同一 verifier 重跑。
+只有进程已完成且 verifier 返回 FAIL 的记录才会进入失败记录簿，并以 `OBSERVED` 开始。
+Failure clustering、可运行的 follow-up、`FIXED/REGRESSED` 和按 `case_id + revision`
+直接 pin 到 Regression Suite 属于后续 Phase C；当前文档不把旧的逐 Run failure row
+或复制 fixture 行为当作完成能力。
 
 ## 可运行示例
 

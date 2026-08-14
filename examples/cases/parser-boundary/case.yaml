@@ -1,0 +1,12 @@
+id: parser-boundary
+fixture:
+  path: fixture
+prompt: |
+  修复这个 API response parser，使它在正常响应之外也能安全处理空结果和缺失字段。先运行 targeted test，再运行完整测试套件，保留输入顺序并避免返回无效记录。不要修改测试。
+verify:
+  command: pytest -q
+limits:
+  timeout_seconds: 180
+constraints:
+  targeted_test: pytest -q test_response_parser.py -k targeted
+  full_test: pytest -q

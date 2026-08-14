@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<section>
+  <p class="muted">LAB / NEW EXPERIMENT</p>
+  <h1>创建一次实验</h1>
+  <p class="muted">不需要手写 Experiment YAML。AEL 会自动展开合法的 Variant × Case × Trial。</p>
+</section>
+{% if error %}<section class="error"><strong>无法创建：</strong> {{ error }}</section>{% endif %}
+<form method="post" action="/experiments/new">
+  <section>
+    <h2>1. Suite / Cases</h2>
+    <div class="two-col">
+      {% for case in cases %}
+      <label class="choice">
+        <input type="checkbox" name="case_path" value="{{ case.path }}" {% if case.path in selected_cases %}checked{% endif %}>
+        <strong>{{ case.id }}</strong> <span class="pill">rev {{ case.revision[:10] }}</span>
+        <br><span class="muted">{{ case.prompt }}</span>
+        <br><small>{{ case.relative_path }} · verifier {{ case.timeout_seconds }}s</small>
+      </label>
+      {% else %}<p class="muted">没有发现 Case definition。</p>{% endfor %}
+    </div>
+    <div class="choice">
+      <div class="choice-title"><input type="checkbox" name="agent_id" value="custom-harness" {% if "custom-harness" in selected_agents %}checked{% endif %}><strong>Custom Harness</strong><span class="pill">configure here</span></div>
+      <p class="muted">输入当前机器上真实可执行的本地命令；没有命令或不可执行时，提交会被拒绝为 unsupported。</p>
+      <label>Command<input type="text" name="custom_command" value="" placeholder="例如：my-agent --json"></label>
+    </div>
+  </section>
+  <section>
+    <h2>2. Agents / Models</h2>
+    <p class="muted">不可用 Agent 会明确 disabled；Default configured 表示使用当前 CLI/provider 配置，精确 model 以真实 Run evidence 为准。</p>
+    <div class="two-col">
+      {% for row in agents %}
+      {% set agent = row.agent %}
+      {% set available = row.capabilities.available %}
+      <div class="choice {% if not available %}disabled{% endif %}">
+        <div class="choice-title">
+          <input type="checkbox" name="agent_id" value="{{ agent.id }}" {% if agent.id in selected_agents %}checked{% endif %} {% if not available %}disabled{% endif %}>
+          <strong>{{ agent.display_name }}</strong>
+          <span class="pill">{{ "available" if available else "unsupported" }}</span>
+        </div>
+        <small class="muted">{{ agent.detected_version }} · {{ row.capabilities.notes|join("；") }}</small>
+        {% if available %}
+        <label>Model / alias
+          <input type="text" name="model_{{ agent.id }}" value="default" aria-label="Model {{ agent.id }}">
+        </label>
+        <label>Provider
+          <input type="text" name="provider_{{ agent.id }}" value="default" aria-label="Provider {{ agent.id }}">
+        </label>
+        <div class="two-col">
+          <label>Run mode<select name="run_mode_{{ agent.id }}"><option value="native">native</option><option value="controlled">controlled</option></select></label>
+          <label>Observation<select name="observation_profile_{{ agent.id }}"><option value="minimal">minimal</option><option value="telemetry">telemetry</option><option value="deep">deep</option></select></label>
+        </div>
+        <label>Agent-specific config (JSON, optional)
+          <textarea name="config_{{ agent.id }}" placeholder='{"permission_mode":"..."}'></textarea>
+        </label>
+        {% else %}<p class="muted">{{ row.capabilities.notes|join("；") }}</p>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  <section>
+    <h2>3. Run policy</h2>
+    <div class="two-col">
+      <label>Experiment name<input type="text" name="experiment_name" value="golden-coding"></label>
+      <label>Suite id<input type="text" name="suite_id" value="golden-coding"></label>
+      <label>Trials<input type="number" min="1" max="20" name="trials" value="1"></label>
+      <label>Concurrency<input type="number" min="1" max="16" name="max_concurrency" value="1"></label>
+    </div>
+  </section>
+  <section>
+    <p><strong>Run preview:</strong> selected variants × selected cases × trials；每个 Run 都会保存 verifier、workspace、native、usage 和 telemetry coverage。</p>
+    <button type="submit">Run experiment</button>
+  </section>
+</form>
+{% endblock %}

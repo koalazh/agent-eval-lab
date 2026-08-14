@@ -1,0 +1,12 @@
+id: state-reset
+fixture:
+  path: fixture
+prompt: |
+  修复这个分页请求状态对象，使同一个对象可以安全地服务多个独立请求。先运行 targeted test，再运行完整测试套件，确保第二个请求不会继承第一个请求的 cursor 状态。不要修改测试。
+verify:
+  command: pytest -q
+limits:
+  timeout_seconds: 180
+constraints:
+  targeted_test: pytest -q test_request_pager.py -k targeted
+  full_test: pytest -q

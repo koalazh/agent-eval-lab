@@ -1,14 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>运行 <code>{{ run.id }}</code></h1>
-<section>
-  <p><strong>运行状态：</strong> {{ run.run_status }} <strong>任务结果：</strong> {{ run.task_outcome }}</p>
-  <p><strong>用例：</strong> {{ run.case_id }} <strong>变体：</strong> {{ run.variant_id }} <strong>试验：</strong> {{ run.trial }}</p>
-  <p><strong>证据覆盖：</strong> {{ run.evidence_coverage }}</p>
-  <p><a href="/runs/{{ run.id }}/explorer">打开确定性失败分析器</a></p>
+<section class="hero"><div><p class="muted">RUN</p><h1>{{ run.case_id }} · {{ run.variant_id }}</h1><p class="muted">trial {{ run.trial }} · {{ run.id }}</p></div><a class="button secondary" href="/runs/{{ run.id }}/explorer">Open Failure Explorer</a></section>
+<section class="grid">
+  <div class="metric"><span class="muted">Result</span><strong class="{{ run.task_outcome }}">{{ run.task_outcome }}</strong></div>
+  <div class="metric"><span class="muted">Process</span><strong>{{ run.run_status }}</strong></div>
+  <div class="metric"><span class="muted">Duration</span><strong>{{ metadata.get("duration_seconds", "unknown") }}s</strong></div>
+  <div class="metric"><span class="muted">Changed files</span><strong>{{ changes.get("changed_files", [])|length }}</strong></div>
 </section>
-<details open><summary>验证器真值</summary><pre>{{ verifier }}</pre></details>
-<details open><summary>工作区差异</summary><pre>{{ diff }}</pre></details>
-<details><summary>原生归一化事件</summary><pre>{{ native }}</pre></details>
-<details><summary>元数据</summary><pre>{{ metadata }}</pre></details>
+<section><h2>Evidence coverage</h2><div class="grid">{% for name, value in run.evidence_coverage.items() %}<div class="metric"><span>{{ name }}</span><strong>{{ value }}</strong></div>{% endfor %}</div></section>
+<section class="two-col">
+  <div><h2>Verifier</h2><p class="{{ verifier.get("outcome", "UNKNOWN") }}">{{ verifier.get("outcome", "UNKNOWN") }}</p><p class="muted">{{ verifier.get("duration_seconds", "unknown") }}s</p></div>
+  <div><h2>Telemetry</h2><p>Model/token usage is shown only when the Run supplied evidence.</p><pre>{{ telemetry }}</pre></div>
+</section>
+<section><h2>Workspace</h2><p>{{ changes.get("changed_files", [])|join(", ") or "No changed files" }}</p><details><summary>Diff</summary><pre>{{ diff }}</pre></details></section>
+<section><h2>Native timeline</h2><div>{% for event in native_events %}<p><span class="pill">{{ event.get("kind", "unknown") }}</span> <strong>{{ event.get("name", "") }}</strong> {{ event.get("summary", "") }}</p>{% else %}<p class="muted">No normalized native events.</p>{% endfor %}</div></section>
 {% endblock %}

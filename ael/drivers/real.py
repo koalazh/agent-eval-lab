@@ -13,6 +13,10 @@ from ..models import Agent, Capabilities, DriverResult, ObservableEvent, RunCont
 from ..process import ProcessSupervisor
 
 
+def _explicit_setting(value: str) -> bool:
+    return str(value or "").strip().lower() not in {"", "unknown", "default", "configured"}
+
+
 def _run_help(binary: str, *args: str) -> tuple[str, str, int | None]:
     try:
         result = subprocess.run([binary, *args], capture_output=True, text=True, timeout=5)
@@ -195,7 +199,7 @@ class CodexDriver(BinaryAgentDriver):
             "--ephemeral",
             "--skip-git-repo-check",
         ]
-        if run_context.variant.model != "UNKNOWN":
+        if _explicit_setting(run_context.variant.model):
             command.extend(["--model", run_context.variant.model])
         if run_context.variant.run_mode.value == "controlled":
             command.extend(["--ignore-user-config", "--ignore-rules", "--sandbox", "workspace-write"])
@@ -268,7 +272,7 @@ class ClaudeCodeDriver(BinaryAgentDriver):
             "--add-dir",
             str(run_context.workspace),
         ]
-        if run_context.variant.model != "UNKNOWN":
+        if _explicit_setting(run_context.variant.model):
             command.extend(["--model", run_context.variant.model])
         permission_mode = run_context.variant.harness_config.get("permission_mode")
         if permission_mode:
@@ -323,8 +327,8 @@ class PiDriver(BinaryAgentDriver):
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
         command = [self._binary_path(), "--mode", "rpc", "--no-session"]
-        if run_context.variant.model != "UNKNOWN":
-            if run_context.variant.provider != "UNKNOWN":
+        if _explicit_setting(run_context.variant.model):
+            if _explicit_setting(run_context.variant.provider):
                 command.extend(["--provider", run_context.variant.provider])
             command.extend(["--model", run_context.variant.model])
         if run_context.variant.run_mode.value == "controlled":
@@ -442,9 +446,9 @@ class HermesDriver(BinaryAgentDriver):
             "--usage-file",
             str(usage_file),
         ]
-        if run_context.variant.model != "UNKNOWN":
+        if _explicit_setting(run_context.variant.model):
             command.extend(["--model", run_context.variant.model])
-        if run_context.variant.provider != "UNKNOWN":
+        if _explicit_setting(run_context.variant.provider):
             command.extend(["--provider", run_context.variant.provider])
         if run_context.variant.run_mode.value == "controlled":
             command.extend(["--ignore-user-config", "--ignore-rules", "--safe-mode"])

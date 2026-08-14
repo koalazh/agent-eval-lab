@@ -1,31 +1,46 @@
 {% extends "base.html" %}
+{% if experiment.status in ["PENDING", "RUNNING"] %}<meta http-equiv="refresh" content="3">{% endif %}
 {% block content %}
-<h1>实验：{{ experiment_id }}</h1>
-<section>
-  <strong>矩阵</strong>
-  <p>{{ matrix.runs }} 次运行 · 变体 × 用例 × 试验</p>
+<section class="hero">
+  <div><p class="muted">LAB / EXPERIMENT</p><h1>{{ experiment_id }}</h1><p class="muted">{{ experiment.suite_id }} · {{ experiment.status }} · created {{ experiment.created_at }}</p></div>
+  <a class="button secondary" href="/experiments/new">New Experiment</a>
+</section>
+<section class="grid">
+  <div class="metric"><span class="muted">Status</span><strong>{{ experiment.status }}</strong></div>
+  <div class="metric"><span class="muted">Runs</span><strong>{{ matrix.runs }}</strong></div>
+  <div class="metric"><span class="muted">Pass rate</span><strong>{{ matrix.summary.pass_rate }}</strong></div>
+  <div class="metric"><span class="muted">Cases × Variants</span><strong>{{ matrix.case_ids|length }} × {{ matrix.variant_ids|length }}</strong></div>
+</section>
+<section class="matrix">
+  <div class="hero"><div><h2>Case × Variant</h2><p class="muted">点击 cell 查看对应 Run；紫色表示该 Case 在 variants 之间有 differential。</p></div></div>
+  {% if matrix.matrix_rows %}
   <table>
-    <tr><th>用例</th><th>变体</th><th>试验次数</th><th>分类</th><th>任务结果</th></tr>
-    {% for row in matrix.rows %}
+    <tr><th>Case</th>{% for column in matrix.columns %}<th>{{ column.label }}</th>{% endfor %}</tr>
+    {% for row in matrix.matrix_rows %}
     <tr>
-      <td>{{ row.case_id }}</td><td>{{ row.variant_id }}</td>
-      <td>{{ row.display }}</td><td>{{ row.classification }}</td>
-      <td>{{ row.passes }} 通过 / {{ row.fails }} 失败 / {{ row.unknown }} 未知</td>
+      <td><strong>{{ row.case_id }}</strong>{% if row.differential %}<br><span class="DIFFERENTIAL">DIFFERENTIAL</span>{% endif %}</td>
+      {% for column in matrix.columns %}
+      {% set cell = row.cells.get(column.id) %}
+      <td>
+        {% if cell and cell.run_ids %}
+          {% set target = "/runs/" ~ cell.run_ids[0] ~ ("/explorer" if cell.fails else "") %}
+          <a class="matrix-cell {{ cell.label }}" href="{{ target }}">
+            <strong>{{ cell.display }}</strong><small class="{{ cell.classification }}">{{ cell.classification }}{% if cell.differential %} · DIFFERENTIAL{% endif %}</small>
+          </a>
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      {% endfor %}
     </tr>
     {% endfor %}
   </table>
+  {% else %}<p class="muted">{{ "等待真实 Run 完成…" if experiment.status in ["PENDING", "RUNNING"] else "没有 Run 结果。" }}</p>{% endif %}
 </section>
 <section>
-  <strong>运行记录</strong>
+  <h2>Runs</h2>
   <table>
-    <tr><th>运行记录</th><th>用例</th><th>变体</th><th>试验</th><th>运行状态</th><th>任务结果</th></tr>
+    <tr><th>Run</th><th>Case</th><th>Variant</th><th>Trial</th><th>Status</th><th>Result</th></tr>
     {% for run in runs %}
-    <tr>
-      <td><a href="/runs/{{ run.id }}"><code>{{ run.id[:12] }}</code></a></td>
-      <td>{{ run.case_id }}</td><td>{{ run.variant_id }}</td><td>{{ run.trial }}</td>
-      <td>{{ run.run_status }}</td>
-      <td class="{{ run.task_outcome|lower }}">{{ run.task_outcome }}</td>
-    </tr>
+    <tr><td><a href="/runs/{{ run.id }}"><code>{{ run.id[:12] }}</code></a></td><td>{{ run.case_id }}</td><td>{{ run.variant_id }}</td><td>{{ run.trial }}</td><td>{{ run.run_status }}</td><td class="{{ run.task_outcome }}">{{ run.task_outcome }}</td></tr>
     {% endfor %}
   </table>
 </section>

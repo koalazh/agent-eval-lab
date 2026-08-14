@@ -1,17 +1,42 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>实验</h1>
-{% if not experiments %}<p class="muted">还没有运行过实验。</p>{% endif %}
-<table>
-  <tr><th>实验</th><th>套件</th><th>状态</th><th>试验次数</th><th>并发数</th></tr>
-  {% for experiment in experiments %}
-  <tr>
-    <td><a href="/experiments/{{ experiment.id }}">{{ experiment.id }}</a></td>
-    <td>{{ experiment.suite_id }}</td>
-    <td><span class="pill">{{ experiment.status }}</span></td>
-    <td>{{ experiment.trials }}</td>
-    <td>{{ experiment.max_concurrency }}</td>
-  </tr>
-  {% endfor %}
-</table>
+<section class="hero">
+  <div>
+    <p class="muted">LAB</p>
+    <h1>研究一次 Agent 行为变化</h1>
+    <p class="muted">选择同一组 Coding Cases，运行真实 Agent，直接看 Case × Variant 的差异。</p>
+  </div>
+  <a class="button" href="/experiments/new">New Experiment</a>
+</section>
+{% if running %}
+<section>
+  <h2>Running</h2>
+  <div class="grid">
+    {% for experiment in running %}
+    <a class="card" href="/experiments/{{ experiment.id }}">
+      <strong>{{ experiment.id }}</strong><br><span class="pill">{{ experiment.status }}</span>
+      <p class="muted">{{ experiment.suite_id }} · {{ experiment.trials }} trials</p>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+<section>
+  <div class="hero"><h2>Recent Experiments</h2><a class="button secondary" href="/experiments/new">创建实验</a></div>
+  {% if not recent %}<p class="muted">还没有实验。先创建一个真实实验。</p>{% endif %}
+  {% if recent %}
+  <table>
+    <tr><th>Experiment</th><th>Suite</th><th>Status</th><th>Trials</th><th>Created</th></tr>
+    {% for experiment in recent %}
+    <tr>
+      <td><a href="/experiments/{{ experiment.id }}"><strong>{{ experiment.id }}</strong></a></td>
+      <td>{{ experiment.suite_id }}</td>
+      <td><span class="pill">{{ experiment.status }}</span></td>
+      <td>{{ experiment.trials }}</td>
+      <td class="muted">{{ experiment.created_at }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</section>
 {% endblock %}

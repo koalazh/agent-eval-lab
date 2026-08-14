@@ -30,7 +30,13 @@ def hash_file_tree(path: Path) -> str:
     if path.is_file():
         return sha256_bytes(path.read_bytes())
     digest = hashlib.sha256()
-    for item in sorted(p for p in path.rglob("*") if p.is_file()):
+    for item in sorted(
+        p
+        for p in path.rglob("*")
+        if p.is_file()
+        and "__pycache__" not in p.parts
+        and p.suffix not in {".pyc", ".pyo"}
+    ):
         digest.update(str(item.relative_to(path)).encode("utf-8"))
         digest.update(b"\0")
         digest.update(item.read_bytes())
@@ -65,4 +71,3 @@ def runtime_profile() -> dict[str, str]:
 
 def config_hash(value: Any) -> str:
     return sha256_text(canonical_json(value))
-

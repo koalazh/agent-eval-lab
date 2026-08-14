@@ -1,17 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>智能体</h1>
-<p class="muted">当前机器探测结果。缺失的二进制程序保持不可用；AEL 不会模拟它们。</p>
-<table>
-  <tr><th>智能体</th><th>版本</th><th>可用</th><th>受控模式</th><th>说明</th></tr>
-  {% for row in agents %}
-  <tr>
-    <td><strong>{{ row.agent.display_name }}</strong><br><code>{{ row.agent.id }}</code></td>
-    <td>{{ row.agent.detected_version }}</td>
-    <td>{{ "是" if row.capabilities.available else "否" }}</td>
-    <td>{{ row.capabilities.controlled_support }}</td>
-    <td>{{ row.capabilities.notes|join("；") }}</td>
-  </tr>
-  {% endfor %}
+<section><p class="muted">SETUP / AGENTS</p><h1>真实 Agent 能力</h1><p class="muted">这是当前机器的只读 probe；available 不等于已经完成真实实验。</p></section>
+<table><tr><th>Agent</th><th>Version</th><th>Availability</th><th>Model</th><th>Observation</th><th>Notes</th></tr>
+{% for row in agents %}<tr><td><strong>{{ row.agent.display_name }}</strong><br><code>{{ row.agent.id }}</code></td><td>{{ row.agent.detected_version }}</td><td class="{{ 'pass' if row.capabilities.available else 'unknown' }}">{{ "available" if row.capabilities.available else "unsupported" }}</td><td>{{ "switchable" if row.capabilities.supports_models else "default only" }}</td><td>{{ "OTel capable" if row.capabilities.supports_telemetry else "native/usage" }}</td><td>{{ row.capabilities.notes|join("；") }}</td></tr>{% endfor %}
 </table>
 {% endblock %}

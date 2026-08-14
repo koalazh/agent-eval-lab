@@ -1,17 +1,5 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>用例</h1>
-{% if not cases %}<p class="muted">还没有持久化的 Case 修订版本。</p>{% endif %}
-<table>
-  <tr><th>用例</th><th>修订版本</th><th>验证器</th><th>Fixture 哈希</th><th>超时时间</th></tr>
-  {% for case in cases %}
-  <tr>
-    <td><strong>{{ case.id }}</strong><br>{{ case.prompt }}</td>
-    <td><code>{{ case.revision[:12] }}</code></td>
-    <td><code>{{ case.verifier_json }}</code></td>
-    <td><code>{{ case.fixture_hash[:12] }}</code></td>
-    <td>{{ case.timeout_seconds }}s</td>
-  </tr>
-  {% endfor %}
-</table>
+<section><p class="muted">SETUP / CASES</p><h1>Coding Cases</h1><p class="muted">Immutable revision/hash 是 verifier task truth 的入口。</p></section>
+<div class="two-col">{% for case in cases %}<article class="card"><h2>{{ case.id }}</h2><span class="pill">revision {{ case.revision[:12] }}</span><p>{{ case.prompt }}</p><small class="muted">{{ case.relative_path }} · timeout {{ case.timeout_seconds }}s</small></article>{% else %}<p class="muted">还没有 Case。</p>{% endfor %}</div>
 {% endblock %}
