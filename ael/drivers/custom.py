@@ -20,7 +20,7 @@ class CustomCLIDriver:
             supports_models=True,
             supports_controlled=False,
             controlled_support="partial",
-            notes=("custom command；隔离语义由该命令自身负责。",),
+            notes=("本地自定义命令；隔离语义由该命令自身负责。",),
         )
 
     def agent(self) -> Agent:

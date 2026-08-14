@@ -19,7 +19,7 @@ async def test_failure_explorer_matches_same_revision_pass_and_localizes_evidenc
     assert details["variable_scope"]["same"]
     assert details["artifact_diff"]["diff"]
     assert details["first_meaningful_divergence"]["reason"] == "verifier outcome differs"
-    assert details["first_meaningful_divergence"]["candidate"]["label"] == "FULL VERIFY FAIL"
+    assert details["first_meaningful_divergence"]["candidate"]["label"] == "完整验证 FAIL"
     assert "因果" in details["note"]
     assert {row["label"] for row in details["metric_rows"]} >= {"端到端时长", "总 tokens", "工具调用", "OTel 证据"}
 

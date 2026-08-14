@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="hero">
-  <div><p class="eyebrow">Failure Explorer</p><h1>候选 Candidate <span class="muted">vs</span> PASS 参考</h1><p class="muted">Run <code>{{ explorer.run_id }}</code> · 同一 Case revision 的可观察证据</p></div>
+  <div><p class="eyebrow">失败分析器</p><h1>候选与 PASS 参考</h1><p class="muted">Run <code>{{ explorer.run_id }}</code> · 同一 Case 版本的可观察证据</p></div>
   <a class="button secondary" href="/runs/{{ explorer.run_id }}">返回 Run 证据</a>
 </section>
 
 <section class="two-col explorer-summary">
-  {% for label, summary in [("候选 Candidate", explorer.candidate_summary), ("匹配的 PASS 参考", explorer.reference_summary)] %}
+  {% for label, summary in [("候选", explorer.candidate_summary), ("匹配的 PASS 参考", explorer.reference_summary)] %}
   <article class="card explorer-run-card">
     <p class="eyebrow">{{ label }}</p>
     {% if summary %}
@@ -29,10 +29,10 @@
 
 <section class="metric-compare-section">
   <div class="section-heading"><div><p class="eyebrow">逐项证据对照</p><h2>关键指标对比</h2></div><span class="pill neutral">候选 − PASS 参考</span></div>
-  <p class="section-lede">这张表把“行为差异”和“资源差异”放在同一个阅读面内：数字来自同一组真实 Run evidence，无法观测的字段显示未知，不用 0 代替。</p>
+  <p class="section-lede">这张表把“行为差异”和“资源差异”放在同一个阅读面内：数字来自同一组真实 Run 证据，无法观测的字段显示未知，不用 0 代替。</p>
   <div class="metric-compare-table-wrap">
     <table class="metric-compare-table">
-      <thead><tr><th>指标</th><th>候选 Candidate</th><th>PASS 参考</th><th>差异 / 解释</th></tr></thead>
+      <thead><tr><th>指标</th><th>候选</th><th>PASS 参考</th><th>差异 / 解释</th></tr></thead>
       <tbody>
       {% for row in explorer.metric_rows %}
       <tr><th>{{ row.label }}</th><td>{{ row.candidate }}</td><td>{{ row.reference }}</td><td class="metric-delta">{{ row.delta }}</td></tr>
@@ -43,17 +43,24 @@
 </section>
 
 <section class="key-difference-section">
-  <div class="section-heading"><div><p class="eyebrow">Failure 定位</p><h2>关键差异</h2></div><span class="pill neutral">先看证据，再看假设</span></div>
+  <div class="section-heading"><div><p class="eyebrow">失败定位</p><h2>关键差异</h2></div><span class="pill neutral">先看证据，再看假设</span></div>
   {% set divergence = explorer.first_meaningful_divergence %}
   {% if divergence.status == "DIVERGENCE" %}
-  <div class="difference-banner"><div class="difference-icon">!</div><div><strong>首次有意义的分歧</strong><p>{{ {"verifier outcome differs": "Verifier 任务真值不同", "unmatched strong action group": "强行为组没有对齐", "same action group has different observed outcome": "同一行为组的结果不同"}.get(divergence.reason, divergence.reason) }}</p></div></div>
+  <div class="difference-banner"><div class="difference-icon">!</div><div><strong>首次有意义的分歧</strong><p>{{ {"verifier outcome differs": "Verifier 检查阶段结果不同", "unmatched strong action group": "强行为组没有对齐", "same action group has different observed outcome": "同一行为组的结果不同"}.get(divergence.reason, divergence.reason) }}</p></div></div>
   <div class="two-col divergence-pair">
-    <div class="divergence-card candidate-side"><span class="eyebrow">候选 Candidate</span><strong>{{ (divergence.candidate or {}).label or "没有可观察行为" }}</strong><p>{{ (divergence.candidate or {}).detail or "—" }}</p></div>
+    <div class="divergence-card candidate-side"><span class="eyebrow">候选</span><strong>{{ (divergence.candidate or {}).label or "没有可观察行为" }}</strong><p>{{ (divergence.candidate or {}).detail or "—" }}</p></div>
     <div class="divergence-card reference-side"><span class="eyebrow">PASS 参考</span><strong>{{ (divergence.reference or {}).label or "没有可观察行为" }}</strong><p>{{ (divergence.reference or {}).detail or "—" }}</p></div>
   </div>
-  <p class="muted difference-note">定位仅基于 Verifier、Workspace、native 和 OTel 的可观察证据，不推断 hidden reasoning。</p>
+  <p class="muted difference-note">定位仅基于 Verifier、Workspace、native 和 OTel 的可观察证据，不推断隐藏推理。</p>
+  {% elif divergence.status == "VERIFIER_BOUNDARY" %}
+  <div class="difference-banner difference-boundary"><div class="difference-icon">?</div><div><strong>Verifier 边界结果不同</strong><p>当前没有可靠的行为组分歧；差异只在任务真值检查阶段被观测到。</p></div></div>
+  <div class="two-col divergence-pair">
+    <div class="divergence-card candidate-side"><span class="eyebrow">候选</span><strong>{{ (divergence.candidate or {}).label or "未知" }}</strong><p>{{ (divergence.candidate or {}).detail or "—" }}</p></div>
+    <div class="divergence-card reference-side"><span class="eyebrow">PASS 参考</span><strong>{{ (divergence.reference or {}).label or "未知" }}</strong><p>{{ (divergence.reference or {}).detail or "—" }}</p></div>
+  </div>
+  <p class="muted difference-note">这是 verifier 的任务真值差异，不等于已定位 Agent 行为根因；请结合下方阶段检查、Workspace diff 与原始输出继续判断。</p>
   {% else %}
-  <div class="empty-state"><strong>NO CLEAR DIVERGENCE</strong><p>当前证据不足以可靠定位双方的行为分歧；AEL 不把缺失的 trace 或 hidden reasoning 当成结论。</p></div>
+  <div class="empty-state"><strong>未发现明确分歧 <span class="muted">NO CLEAR DIVERGENCE</span></strong><p>当前证据不足以可靠定位双方的行为分歧；AEL 不把缺失的 trace 或隐藏推理当成结论。</p></div>
   {% endif %}
 </section>
 
@@ -61,15 +68,15 @@
   <div class="section-heading"><div><p class="eyebrow">对齐后的行为组</p><h2>Trajectory 对比</h2></div><span class="muted">按 READ / MUTATE / TOOL / VERIFY / COMPLETE 局部对齐</span></div>
   <p class="section-lede">忽略不会改变行为意义的重复细节，优先保持修改、验证和完成等强锚点的上下文。</p>
   <div class="trajectory-compare">
-  <div class="trajectory-compare-head"><span>候选 Candidate</span><span>状态</span><span>PASS 参考</span></div>
+  <div class="trajectory-compare-head"><span>候选</span><span>状态</span><span>PASS 参考</span></div>
     {% for row in trajectory_rows %}
     <div class="trajectory-compare-row status-{{ row.status|lower }} {% if row.first_divergence %}first-divergence{% endif %}">
       <div>{% if row.candidate %}<span class="group-badge group-{{ row.candidate.group|lower }}">{{ row.candidate.group_label }}</span><strong>{{ row.candidate.label }}</strong><p>{{ row.candidate.detail }}</p><small>{{ row.candidate.source }} · {{ row.candidate.event_count }} 个事件 · {{ row.candidate.duration_label }}</small>{% else %}<span class="muted">—</span>{% endif %}</div>
-      <div class="compare-status">{% if row.first_divergence %}<b>首个有意义分歧</b>{% else %}{{ row.status_label }}{% endif %}</div>
+      <div class="compare-status">{% if row.first_divergence %}<b>{% if row.boundary_divergence %}Verifier 边界差异{% else %}首个有意义分歧{% endif %}</b>{% else %}{{ row.status_label }}{% endif %}</div>
       <div>{% if row.reference %}<span class="group-badge group-{{ row.reference.group|lower }}">{{ row.reference.group_label }}</span><strong>{{ row.reference.label }}</strong><p>{{ row.reference.detail }}</p><small>{{ row.reference.source }} · {{ row.reference.event_count }} 个事件 · {{ row.reference.duration_label }}</small>{% else %}<span class="muted">—</span>{% endif %}</div>
     </div>
     {% else %}
-    <div class="empty-state">没有可对齐的 trajectory evidence。</div>
+    <div class="empty-state">没有可对齐的 trajectory 证据。</div>
     {% endfor %}
   </div>
 </section>
@@ -77,7 +84,7 @@
 <section class="span-compare-section">
   <div class="section-heading"><div><p class="eyebrow">详细事件视图</p><h2>OTel event / span 对比</h2></div><span class="muted">详细属性在各 Run 页面展开</span></div>
   <div class="two-col trace-compare-panes">
-    {% for label, trace in [("候选 Candidate", candidate_trace), ("PASS 参考", reference_trace)] %}
+    {% for label, trace in [("候选", candidate_trace), ("PASS 参考", reference_trace)] %}
     <article class="trace-compare-pane">
       <div class="subsection-title"><strong>{{ label }}</strong><span>{{ trace.otel_event_count }} 条 OTel</span></div>
       <div class="mini-signal-row">{% for key, value in trace.signal_counts.items() %}<span class="signal-chip signal-chip-{{ key }}">{{ key }} {{ value }}</span>{% else %}<span class="muted">没有 OTel event</span>{% endfor %}</div>
@@ -94,33 +101,33 @@
 </section>
 
 <section class="evidence-section explorer-evidence">
-  <div class="section-heading"><div><p class="eyebrow">证据</p><h2>Verifier / Workspace / Diff</h2></div><span class="muted">逐项显示候选 Candidate 与 PASS 参考实际拥有的证据</span></div>
+  <div class="section-heading"><div><p class="eyebrow">证据</p><h2>Verifier / Workspace / Diff</h2></div><span class="muted">逐项显示候选与 PASS 参考实际拥有的证据</span></div>
   <div class="two-col explorer-evidence-panes">
-    {% for label, sources in [("候选 Candidate", candidate_evidence_sources), ("PASS 参考", reference_evidence_sources)] %}
+    {% for label, sources in [("候选", candidate_evidence_sources), ("PASS 参考", reference_evidence_sources)] %}
     <article class="trace-compare-pane">
       <div class="subsection-title"><strong>{{ label }}</strong><span class="muted">证据覆盖</span></div>
       <div class="evidence-mini-list">
         {% for source in sources %}
         <div class="evidence-mini evidence-{{ source.status }}"><div class="evidence-card-head"><span>{{ source.label }}</span><span class="evidence-state">{% if source.status == 'observed' %}已观测{% else %}未知{% endif %}</span></div><strong>{{ source.value }}</strong><p>{{ source.detail }}</p></div>
-        {% else %}<div class="empty-state">没有可用的 evidence。</div>{% endfor %}
+        {% else %}<div class="empty-state">没有可用的证据。</div>{% endfor %}
       </div>
     </article>
     {% endfor %}
   </div>
-  <p><strong>候选 Candidate 变更文件：</strong> {{ explorer.candidate_summary.changed_files|join(", ") or "没有" }}</p>
+  <p><strong>候选变更文件：</strong> {{ explorer.candidate_summary.changed_files|join(", ") or "没有" }}</p>
   <details><summary>产物 diff</summary><pre>{{ explorer.artifact_diff.diff }}</pre></details>
-  {% if explorer.artifact_diff.candidate_reference_diff %}<details><summary>候选 Candidate 与 PASS 参考实现 diff</summary><pre>{{ explorer.artifact_diff.candidate_reference_diff }}</pre></details>{% endif %}
-  <details><summary>候选 Candidate OTel 原始记录</summary><pre>{{ candidate_otel_raw }}</pre></details>
+  {% if explorer.artifact_diff.candidate_reference_diff %}<details><summary>候选与 PASS 参考实现 diff</summary><pre>{{ explorer.artifact_diff.candidate_reference_diff }}</pre></details>{% endif %}
+  <details><summary>候选 OTel 原始记录</summary><pre>{{ candidate_otel_raw }}</pre></details>
   <details><summary>PASS 参考 OTel 原始记录</summary><pre>{{ reference_otel_raw }}</pre></details>
-  <details><summary>候选 Candidate native 原始记录</summary><pre>{{ candidate_raw }}</pre></details>
+  <details><summary>候选 native 原始记录</summary><pre>{{ candidate_raw }}</pre></details>
   <details><summary>PASS 参考 native 原始记录</summary><pre>{{ reference_raw }}</pre></details>
 </section>
 
 <section class="diagnosis-section">
-  <div class="section-heading"><div><p class="eyebrow">基于 evidence 的诊断</p><h2>诊断</h2></div><span class="muted">不输出虚假因果概率</span></div>
+  <div class="section-heading"><div><p class="eyebrow">基于证据的诊断</p><h2>诊断</h2></div><span class="muted">不输出虚假因果概率</span></div>
   <p><strong>观察到的事实</strong></p>
   <ul>{% for item in diagnosis.observed %}<li>{{ item }}</li>{% endfor %}</ul>
-  {% for hypothesis in diagnosis.hypotheses %}<div class="hypothesis-card"><span class="eyebrow">假设 Hypothesis</span><strong>{{ hypothesis.statement }}</strong><p class="muted">{{ hypothesis.certainty }}</p></div>{% endfor %}
+  {% for hypothesis in diagnosis.hypotheses %}<div class="hypothesis-card"><span class="eyebrow">假设</span><strong>{{ hypothesis.statement }}</strong><p class="muted">{{ hypothesis.certainty }}</p></div>{% endfor %}
   <p><strong>证据</strong></p><ul>{% for item in diagnosis.evidence %}<li>{{ item }}</li>{% endfor %}</ul>
   <p><strong>反证 / 未知</strong></p><ul>{% for item in diagnosis.counter_evidence + diagnosis.unknowns %}<li>{{ item }}</li>{% endfor %}</ul>
   <p><strong>建议的工程变更：</strong> {{ diagnosis.suggested_improvement }}</p>

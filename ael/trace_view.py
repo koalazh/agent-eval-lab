@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime
+import re
 from typing import Any
 
 
@@ -219,6 +220,33 @@ def _operation(event: dict[str, Any]) -> str:
     return name or str(attrs.get("type") or _KIND_LABELS.get(kind, kind))
 
 
+def _kind_label(event: dict[str, Any]) -> str:
+    """Prefer the observable operation name over a generic normalized kind."""
+    kind = str(event.get("kind") or "unknown")
+    name = _event_name(event).lower()
+    if kind in {"tool_call", "tool_result", "command", "file_change", "verification"}:
+        return _KIND_LABELS.get(kind, kind)
+    if name == "api_request":
+        return "Model 调用"
+    if name == "assistant_response":
+        return "Agent 响应"
+    if name == "user_prompt":
+        return "任务提示"
+    if name == "plugin_loaded":
+        return "插件加载"
+    if "token.usage" in name:
+        return "Token 用量"
+    if "cost.usage" in name:
+        return "成本样本"
+    if "lines_of_code" in name or "code_edit" in name:
+        return "代码变更指标"
+    if "session.count" in name:
+        return "会话次数"
+    if "active_time" in name:
+        return "活跃时长"
+    return _KIND_LABELS.get(kind, kind)
+
+
 def _detail(event: dict[str, Any]) -> str:
     kind = str(event.get("kind") or "unknown")
     name = _event_name(event)
@@ -232,15 +260,15 @@ def _detail(event: dict[str, Any]) -> str:
         decision = attrs.get("decision")
         return f"{tool} · {('决策 ' + str(decision)) if decision else '已发起'} · 命令内容未采集"
     if name == "api_request":
-        model = attrs.get("model") or "未知 model"
-        source = attrs.get("query_source") or "未知 query source"
+        model = attrs.get("model") or "未知 Model"
+        source = attrs.get("query_source") or "未知来源"
         return f"{model} · {source} · 输入 {attrs.get('input_tokens', '未知')} / 输出 {attrs.get('output_tokens', '未知')} tokens"
     if name == "assistant_response":
-        return f"{attrs.get('model', '未知 model')} · response 已脱敏 · {attrs.get('query_source', '未知 query source')}"
+        return f"{attrs.get('model', '未知 Model')} · 响应已脱敏 · {attrs.get('query_source', '未知来源')}"
     if name == "user_prompt":
-        return f"prompt 已脱敏 · 长度 {attrs.get('prompt_length', '未知')} · sequence {attrs.get('event.sequence', '未知')}"
+        return f"提示词已脱敏 · 长度 {attrs.get('prompt_length', '未知')} · sequence {attrs.get('event.sequence', '未知')}"
     if name == "plugin_loaded":
-        return f"plugin scope {attrs.get('plugin.scope', '未知')} · plugin 内容未展开"
+        return f"插件范围 {attrs.get('plugin.scope', '未知')} · 插件内容未展开"
     if "token.usage" in name:
         return f"{attrs.get('type', '未知')} · {attrs.get('query_source', '未知')} · 当前样本值见属性"
     if "cost.usage" in name:
@@ -311,6 +339,94 @@ def _source_label(signal: str) -> str:
     return _SIGNAL_LABELS.get(signal, signal)
 
 
+_VERIFIER_PHASE_LABELS = {
+    "targeted verification": "定向验证",
+    "visible full suite": "可见全量测试",
+    "hidden boundary verification": "隐藏边界验证",
+}
+
+
+def _verifier_phase_label(value: str) -> str:
+    normalized = re.sub(r"\s+", " ", value.strip().lower())
+    return _VERIFIER_PHASE_LABELS.get(normalized, value.strip().rstrip(":"))
+
+
+def _verifier_phase_detail(lines: list[str], status: str) -> str:
+    compact = " ".join(line.strip() for line in lines if line.strip())
+    if status == "PASS":
+        matches = re.findall(r"\d+\s+(?:passed|failed|deselected|skipped)(?:,\s*\d+\s+\w+)*[^\n]*", compact)
+        if matches:
+            return matches[-1].strip()
+        return next((line.strip() for line in reversed(lines) if line.strip()), "Verifier 阶段通过")
+    if status == "FAIL":
+        for line in reversed(lines):
+            text = line.strip()
+            if re.match(r"(?:RuntimeError|AssertionError|[A-Za-z]+Error):", text):
+                return text[:220]
+        return "Verifier 阶段失败"
+    return "没有足够的阶段结果证据"
+
+
+def build_verifier_phases(verifier: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Extract explicit verifier checkpoints without presenting them as Agent actions."""
+    verifier = verifier or {}
+    stdout = str(verifier.get("stdout") or "")
+    stderr = str(verifier.get("stderr") or "")
+    lines = stdout.splitlines()
+    headers: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or ":" not in stripped:
+            continue
+        raw_label, inline = stripped.split(":", 1)
+        lowered = raw_label.lower()
+        if any(token in lowered for token in ("verification", "suite", "test")):
+            headers.append((index, raw_label, inline.strip()))
+
+    phases: list[dict[str, Any]] = []
+    for phase_index, (line_index, raw_label, inline) in enumerate(headers):
+        end = headers[phase_index + 1][0] if phase_index + 1 < len(headers) else len(lines)
+        block = ([inline] if inline else []) + lines[line_index + 1 : end]
+        text = " ".join(line.strip() for line in block if line.strip()).lower()
+        has_failure = bool(re.search(r"\b(?:failed|error|errors)\b", text))
+        has_pass = bool(re.search(r"(?:\b\d+\s+passed\b|\bpassed\b)", text))
+        status = "FAIL" if has_failure else "PASS" if has_pass else "UNKNOWN"
+        phases.append(
+            {
+                "label": _verifier_phase_label(raw_label),
+                "status": status,
+                "status_class": "success" if status == "PASS" else "failed" if status == "FAIL" else "observed",
+                "detail": _verifier_phase_detail(block, status),
+                "source": "Verifier",
+                "event_count": 1,
+                "duration_label": "—",
+                "sequence": "—",
+                "phase": True,
+            }
+        )
+
+    if verifier.get("outcome") == "FAIL" and stderr and not any("隐藏边界" in phase["label"] for phase in phases):
+        error_lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+        detail = next(
+            (line[:220] for line in reversed(error_lines) if re.match(r"(?:RuntimeError|AssertionError|[A-Za-z]+Error):", line)),
+            "Verifier 最终检查失败",
+        )
+        phases.append(
+            {
+                "label": "最终边界检查",
+                "status": "FAIL",
+                "status_class": "failed",
+                "detail": detail,
+                "source": "Verifier",
+                "event_count": 1,
+                "duration_label": "—",
+                "sequence": "—",
+                "phase": True,
+            }
+        )
+    return phases
+
+
 def _merge_events(otel_events: list[dict[str, Any]], native_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not otel_events:
         return [
@@ -347,6 +463,26 @@ def _trajectory_order_key(event: dict[str, Any], index: int) -> tuple[int, float
     return (2, float(index), index)
 
 
+def _trace_category(event: dict[str, Any], signal: str) -> tuple[str, str]:
+    kind = str(event.get("kind") or "unknown")
+    name = _event_name(event).lower()
+    if name in {"api_request", "assistant_response"}:
+        return "model", "Model 调用"
+    if kind in {"tool_call", "tool_result", "command"}:
+        return "tool", "工具与命令"
+    if kind == "verification":
+        return "verification", "验证"
+    if kind == "file_change":
+        return "change", "文件变更"
+    if "token" in name or "cost" in name or "lines_of_code" in name or "code_edit" in name:
+        return "resource", "Token / 成本"
+    if signal == "metrics":
+        return "resource", "Token / 成本"
+    if name in {"user_prompt", "plugin_loaded"} or kind == "final":
+        return "lifecycle", "会话与生命周期"
+    return "other", "其他事件"
+
+
 def build_trace_view(
     otel_events: list[dict[str, Any]],
     native_events: list[dict[str, Any]],
@@ -377,6 +513,7 @@ def build_trace_view(
             duration_ms = attr_duration
         signal = _signal(event)
         status, status_class = _status(event)
+        category, category_label = _trace_category(event, signal)
         bar_left = min(98.0, max(0.0, offset_ms / total_ms * 100)) if total_ms else 0.0
         bar_width = min(42.0, max(1.2, (duration_ms or 0) / total_ms * 100)) if total_ms else 2.0
         views.append(
@@ -385,11 +522,13 @@ def build_trace_view(
                 "signal": signal,
                 "signal_label": _source_label(signal),
                 "kind": str(event.get("kind") or "unknown"),
-                "kind_label": _KIND_LABELS.get(str(event.get("kind") or "unknown"), str(event.get("kind") or "unknown")),
+                "kind_label": _kind_label(event),
                 "operation": _operation(event),
                 "detail": _detail(event),
                 "status": status,
                 "status_class": status_class,
+                "category": category,
+                "category_label": category_label,
                 "offset_label": _format_offset(offset_ms),
                 "duration_label": _format_duration(duration_ms),
                 "bar_left": f"{bar_left:.2f}",
@@ -704,11 +843,11 @@ def _trajectory_step(event: dict[str, Any], related: list[dict[str, Any]] | None
             group, group_label, label = "READ", "读取 / 搜索", "读取 · 命令"
         else:
             group, group_label, label = "TOOL", "工具", "工具 · 命令"
-        detail, status, duration = "命令内容已观察但按 observation profile 脱敏", "已观测", None
+        detail, status, duration = "命令内容已观察，但按 observation profile（观测配置）脱敏", "已观测", None
     elif kind == "verification":
-        group, group_label, label, detail, status, duration = "VERIFY", "验证", "验证 · 结果", str(event.get("summary") or "verifier result"), "已观测", None
+        group, group_label, label, detail, status, duration = "VERIFY", "验证", "验证 · 结果", str(event.get("summary") or "verifier 结果"), "已观测", None
     elif kind == "final":
-        group, group_label, label, detail, status, duration = "COMPLETE", "完成", "Agent 完成", "Agent native final event", "已观测", None
+        group, group_label, label, detail, status, duration = "COMPLETE", "完成", "Agent 完成", "Agent 原生完成事件", "已观测", None
     else:
         return {}
     source = _source_label(_signal(event))
@@ -798,6 +937,24 @@ def build_trajectory(
                 "sequence": "—",
             },
         )
+    verifier_phases = build_verifier_phases(verifier)
+    for phase in verifier_phases:
+        steps.append(
+            {
+                "index": len(steps) + 1,
+                "group": "VERIFY",
+                "group_label": "验证",
+                "label": f"Verifier · {phase['label']} {phase['status']}",
+                "detail": phase["detail"],
+                "status": phase["status"],
+                "status_class": phase["status_class"],
+                "source": phase["source"],
+                "event_count": phase["event_count"],
+                "duration_label": phase["duration_label"],
+                "sequence": phase["sequence"],
+                "phase": True,
+            }
+        )
     outcome = (verifier or {}).get("outcome")
     if outcome in {"PASS", "FAIL"}:
         steps.append(
@@ -805,8 +962,8 @@ def build_trajectory(
                 "index": len(steps) + 1,
                 "group": "VERIFY",
                 "group_label": "验证",
-                "label": f"Verifier · 全量验证 {outcome}",
-                "detail": "task truth；stdout / stderr 可在下方展开。",
+                "label": f"Verifier · {'任务结论' if verifier_phases else '全量验证'} {outcome}",
+                "detail": "任务真值；stdout / stderr 可在下方展开。",
                 "status": outcome,
                 "status_class": "success" if outcome == "PASS" else "failed",
                 "source": "Verifier",
@@ -856,6 +1013,11 @@ def align_trajectories(left: list[dict[str, Any]], right: list[dict[str, Any]]) 
         else:
             status = "REFERENCE_ONLY"
         meaningful = status != "MATCH" and (candidate or reference)
+        boundary = any(
+            str(item.get("source") or "").lower() == "verifier"
+            for item in (candidate, reference)
+            if item
+        )
         rows.append(
             {
                 "candidate": candidate,
@@ -864,10 +1026,11 @@ def align_trajectories(left: list[dict[str, Any]], right: list[dict[str, Any]]) 
                 "status_label": {
                     "MATCH": "对齐",
                     "DIVERGENCE": "行为差异",
-                    "CANDIDATE_ONLY": "仅 Candidate",
-                    "REFERENCE_ONLY": "仅 PASS reference",
+                    "CANDIDATE_ONLY": "仅候选",
+                    "REFERENCE_ONLY": "仅 PASS 参考",
                 }[status],
                 "first_divergence": bool(meaningful and first),
+                "boundary_divergence": bool(meaningful and boundary),
             }
         )
         if meaningful:

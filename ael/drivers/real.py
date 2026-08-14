@@ -186,7 +186,7 @@ class CodexDriver(BinaryAgentDriver):
             controlled_support="full",
             supports_telemetry=False,
             supports_deep=True,
-            notes=("当前 CLI help 提供 exec --json，以及按 Run 配置 config/sandbox 的参数。",),
+            notes=("当前 CLI help 提供 exec --json，以及按 Run 配置 config / sandbox 的参数。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
@@ -323,7 +323,7 @@ class PiDriver(BinaryAgentDriver):
             controlled_support="partial",
             supports_telemetry=False,
             supports_deep=True,
-            notes=("RPC protocol 是当前 native JSONL；controlled 的 context/file isolation 取决于当前 CLI 参数。",),
+            notes=("当前 native JSONL 使用 RPC protocol；受控运行的上下文 / 文件隔离取决于当前 CLI 参数。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
@@ -435,7 +435,7 @@ class HermesDriver(BinaryAgentDriver):
             controlled_support="partial",
             supports_telemetry=False,
             supports_deep=True,
-            notes=("oneshot 和 usage-file 是当前接口；oneshot isolation 参数需要按版本验证。",),
+            notes=("oneshot 和 usage-file 是当前接口；oneshot 的隔离参数需要按版本验证。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:

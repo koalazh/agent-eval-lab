@@ -9,11 +9,11 @@
 <section>
   <p class="muted">诊断建议</p>
   <h2>验证策略可能改变完成行为</h2>
-  <p>基线 Baseline 与候选 Candidate 必须真的改变一个独立变量；本页提交后会直接运行两个 Variant × Case × Trial。</p>
+  <p>基线与候选必须真的改变一个独立变量；本页提交后会直接运行两个 Variant × Case × Trial。</p>
 </section>
 
 <section class="two-col">
-  {% for label, variant in [("基线 Baseline", draft.variants[0]), ("候选 Candidate", draft.variants[1])] %}
+  {% for label, variant in [("基线", draft.variants[0]), ("候选", draft.variants[1])] %}
   <div class="card">
     <p class="muted">{{ label }}</p>
     <h2>{{ variant.agent_id }} / {{ "默认配置" if variant.model in ["default", "unknown"] else variant.model }}</h2>
@@ -30,14 +30,14 @@
   <p class="section-lede">提交前先核对固定项和变化项。只有这张表中的候选 Variant 真正不同，后续 Run 才能解释独立变量的影响。</p>
   <div class="follow-up-table-wrap">
     <table class="follow-up-table">
-      <thead><tr><th>比较维度</th><th>基线 Baseline</th><th>候选 Candidate</th><th>是否变化</th></tr></thead>
+      <thead><tr><th>比较维度</th><th>基线</th><th>候选</th><th>是否变化</th></tr></thead>
       <tbody>
-        <tr><th>Agent</th><td>{{ baseline.agent_id }}</td><td>{{ candidate.agent_id }}</td><td>{{ "变化" if baseline.agent_id != candidate.agent_id else "固定" }}</td></tr>
-        <tr><th>Model</th><td>{{ "默认配置" if baseline.model in ["default", "unknown"] else baseline.model }}</td><td>{{ "默认配置" if candidate.model in ["default", "unknown"] else candidate.model }}</td><td>{{ "变化" if baseline.model != candidate.model else "固定" }}</td></tr>
-        <tr><th>Provider</th><td>{{ "默认配置" if baseline.provider in ["default", "unknown"] else baseline.provider }}</td><td>{{ "默认配置" if candidate.provider in ["default", "unknown"] else candidate.provider }}</td><td>{{ "变化" if baseline.provider != candidate.provider else "固定" }}</td></tr>
-        <tr><th>运行模式</th><td>{{ {"controlled": "受控", "native": "原生"}.get(baseline.run_mode.value, baseline.run_mode.value) }}</td><td>{{ {"controlled": "受控", "native": "原生"}.get(candidate.run_mode.value, candidate.run_mode.value) }}</td><td>{{ "变化" if baseline.run_mode != candidate.run_mode else "固定" }}</td></tr>
-        <tr><th>verification_gate</th><td>{{ "开启" if baseline.harness_config.get("verification_gate") is true else "关闭" if baseline.harness_config.get("verification_gate") is false else "未配置" }}</td><td>{{ "开启" if candidate.harness_config.get("verification_gate") is true else "关闭" if candidate.harness_config.get("verification_gate") is false else "未配置" }}</td><td>{{ "变化" if baseline.harness_config.get("verification_gate") != candidate.harness_config.get("verification_gate") else "固定" }}</td></tr>
-        <tr><th>Case revision</th><td colspan="2">同一 Suite / 同一不可变 revision</td><td>固定</td></tr>
+        <tr id="follow-up-row-agent"><th>Agent</th><td>{{ baseline.agent_id }}</td><td>{{ candidate.agent_id }}</td><td>{{ "变化" if baseline.agent_id != candidate.agent_id else "固定" }}</td></tr>
+        <tr id="follow-up-row-model"><th>Model</th><td>{{ "默认配置" if baseline.model in ["default", "unknown"] else baseline.model }}</td><td>{{ "默认配置" if candidate.model in ["default", "unknown"] else candidate.model }}</td><td>{{ "变化" if baseline.model != candidate.model else "固定" }}</td></tr>
+        <tr id="follow-up-row-provider"><th>Provider</th><td>{{ "默认配置" if baseline.provider in ["default", "unknown"] else baseline.provider }}</td><td>{{ "默认配置" if candidate.provider in ["default", "unknown"] else candidate.provider }}</td><td>{{ "变化" if baseline.provider != candidate.provider else "固定" }}</td></tr>
+        <tr id="follow-up-row-run-mode"><th>运行模式</th><td>{{ {"controlled": "受控", "native": "原生"}.get(baseline.run_mode.value, baseline.run_mode.value) }}</td><td>{{ {"controlled": "受控", "native": "原生"}.get(candidate.run_mode.value, candidate.run_mode.value) }}</td><td>{{ "变化" if baseline.run_mode != candidate.run_mode else "固定" }}</td></tr>
+        <tr id="follow-up-row-verification-gate"><th>verification_gate</th><td>{{ "开启" if baseline.harness_config.get("verification_gate") is true else "关闭" if baseline.harness_config.get("verification_gate") is false else "未配置" }}</td><td>{{ "开启" if candidate.harness_config.get("verification_gate") is true else "关闭" if candidate.harness_config.get("verification_gate") is false else "未配置" }}</td><td>{{ "变化" if baseline.harness_config.get("verification_gate") != candidate.harness_config.get("verification_gate") else "固定" }}</td></tr>
+        <tr><th>Case 版本</th><td colspan="2">同一测试套件 / 同一不可变版本</td><td>固定</td></tr>
         <tr><th>观测配置</th><td>{{ {"telemetry": "遥测", "minimal": "最小", "deep": "深度"}.get(baseline.observation_profile.value, baseline.observation_profile.value) }}</td><td>{{ {"telemetry": "遥测", "minimal": "最小", "deep": "深度"}.get(candidate.observation_profile.value, candidate.observation_profile.value) }}</td><td>{{ "变化" if baseline.observation_profile != candidate.observation_profile else "固定" }}</td></tr>
         <tr><th>试验次数</th><td colspan="2">{{ draft.trials }} 次 / {{ draft.max_concurrency }} 并发</td><td>固定</td></tr>
       </tbody>
@@ -47,23 +47,66 @@
 
 <section>
   <h2>编辑并运行</h2>
-  <form method="post" action="/runs/{{ run_id }}/follow-up">
+  <form method="post" action="/runs/{{ run_id }}/follow-up" id="follow-up-builder" data-source-agent="{{ baseline.agent_id }}" data-source-model="{{ baseline.model }}" data-source-provider="{{ baseline.provider }}" data-source-run-mode="{{ baseline.run_mode.value }}">
     <label>要改变的独立变量
-      <select name="independent_variable">
-        <option value="verification_gate" selected>verification_gate（AEL Harness）</option>
+      <select name="independent_variable" id="follow-up-variable">
+        <option value="verification_gate" selected>verification_gate（AEL Harness 验证门）</option>
         <option value="run_mode">运行模式</option>
         <option value="agent">Agent</option>
       </select>
     </label>
-    <label>候选 Agent（仅用于 Agent 消融）
-      <select name="candidate_agent_id">
+    <label>候选 Agent（仅用于 Agent 对照）
+      <select name="candidate_agent_id" id="follow-up-candidate-agent">
         <option value="">使用源 Agent</option>
         {% for row in agents if row.capabilities.available %}<option value="{{ row.agent.id }}">{{ row.agent.display_name }}</option>{% endfor %}
       </select>
     </label>
     <label>试验次数（trials）<input type="number" name="trials" min="1" value="{{ draft.trials }}"></label>
     <label>并发数（concurrency）<input type="number" name="max_concurrency" min="1" value="{{ draft.max_concurrency }}"></label>
+    <p class="muted" id="follow-up-selection-note">当前会把 verification_gate 从关闭改为开启；表格会随上方选择同步更新。</p>
     <button type="submit">运行后续实验</button>
   </form>
 </section>
+<script>
+(() => {
+  const builder = document.getElementById("follow-up-builder");
+  const variable = document.getElementById("follow-up-variable");
+  const candidateAgent = document.getElementById("follow-up-candidate-agent");
+  const note = document.getElementById("follow-up-selection-note");
+  if (!builder || !variable) return;
+  const sourceAgent = builder.dataset.sourceAgent || "未知 Agent";
+  const sourceModel = builder.dataset.sourceModel || "default";
+  const sourceProvider = builder.dataset.sourceProvider || "default";
+  const sourceMode = builder.dataset.sourceRunMode || "native";
+  const modeLabels = { native: "原生", controlled: "受控" };
+  const displayDefault = (value) => ["default", "unknown"].includes(value) ? "默认配置" : value;
+  const row = (id) => document.getElementById(id);
+  const cells = (id) => row(id)?.querySelectorAll("td") || [];
+  const setRow = (id, label, baseline, candidate, changed) => {
+    const target = row(id);
+    const values = cells(id);
+    if (!target || values.length < 3) return;
+    target.querySelector("th").textContent = label;
+    values[0].textContent = baseline;
+    values[1].textContent = candidate;
+    values[2].textContent = changed ? "变化" : "固定";
+  };
+  function applyPreview() {
+    const selected = variable.value;
+    const selectedAgentOption = candidateAgent?.selectedOptions?.[0];
+    const candidateAgentLabel = selectedAgentOption?.value ? selectedAgentOption.textContent : sourceAgent;
+    setRow("follow-up-row-agent", "Agent", sourceAgent, selected === "agent" ? candidateAgentLabel : sourceAgent, selected === "agent" && candidateAgentLabel !== sourceAgent);
+    setRow("follow-up-row-model", "Model", displayDefault(sourceModel), selected === "agent" && candidateAgentLabel !== sourceAgent ? "默认配置" : displayDefault(sourceModel), selected === "agent" && candidateAgentLabel !== sourceAgent && sourceModel !== "default");
+    setRow("follow-up-row-provider", "Provider", displayDefault(sourceProvider), selected === "agent" && candidateAgentLabel !== sourceAgent ? "默认配置" : displayDefault(sourceProvider), selected === "agent" && candidateAgentLabel !== sourceAgent && sourceProvider !== "default");
+    setRow("follow-up-row-run-mode", "运行模式", modeLabels[sourceMode] || sourceMode, selected === "run_mode" ? (modeLabels[sourceMode === "native" ? "controlled" : "native"] || "未知") : (modeLabels[sourceMode] || sourceMode), selected === "run_mode");
+    setRow("follow-up-row-verification-gate", "verification_gate", selected === "verification_gate" ? "关闭" : "未配置", selected === "verification_gate" ? "开启" : "未配置", selected === "verification_gate");
+    if (note) {
+      note.textContent = selected === "verification_gate" ? "当前会把 verification_gate 从关闭改为开启；表格会随上方选择同步更新。" : selected === "run_mode" ? "当前会固定 Agent / Model，只切换运行模式；表格展示真实 baseline / candidate 差异。" : "当前会固定 Case 与观测配置，只替换 candidate Agent；不支持的组合会在提交前拒绝。";
+    }
+  }
+  variable.addEventListener("change", applyPreview);
+  candidateAgent?.addEventListener("change", applyPreview);
+  applyPreview();
+})();
+</script>
 {% endblock %}

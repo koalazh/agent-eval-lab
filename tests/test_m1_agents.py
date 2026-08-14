@@ -10,6 +10,8 @@ def test_trial_classification_is_explicit():
     assert trial_summary(["FAIL", "FAIL", "FAIL"])["classification"] == "STABLE_FAIL"
     assert trial_summary(["PASS", "FAIL", "PASS"])["classification"] == "FLAKY"
     assert trial_summary(["UNKNOWN", "UNKNOWN"])["classification"] == "ERROR"
+    assert trial_summary(["FAIL", "UNKNOWN"])["display"] == "0/2 PASS · 1 次未知"
+    assert trial_summary(["PASS", "UNKNOWN"])["display"] == "1/2 PASS · 1 次未知"
 
 
 def test_matrix_report_groups_case_variant_trials():

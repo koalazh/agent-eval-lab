@@ -9,7 +9,7 @@ from typing import Any
 from .hashing import UNKNOWN, canonical_json
 from .persistence import Repository
 from .reports import matrix_report, trial_summary
-from .trace_view import build_metric_snapshot, build_trace_view
+from .trace_view import build_metric_snapshot, build_trace_view, build_verifier_phases
 
 
 _FINGERPRINT_FIELDS = (
@@ -230,7 +230,11 @@ def _meaningful_divergence_from_steps(
         if candidate[left_index]["label"] != reference[right_index]["label"]:
             return {
                 "status": "DIVERGENCE",
-                "reason": "same action group has different observed outcome",
+                "reason": (
+                    "verifier outcome differs"
+                    if candidate[left_index].get("source") == reference[right_index].get("source") == "verifier"
+                    else "same action group has different observed outcome"
+                ),
                 "candidate": candidate[left_index],
                 "reference": reference[right_index],
             }
@@ -354,7 +358,7 @@ def _timeline(repository: Repository, run: dict[str, Any]) -> list[dict[str, Any
     if changed_files and not any(step["group"] == "MUTATE" for step in steps):
         mutation = {
             "group": "MUTATE",
-            "label": "MUTATE",
+            "label": "代码变更",
             "detail": ", ".join(changed_files),
             "source": "workspace",
             "kind": "file_change",
@@ -362,12 +366,23 @@ def _timeline(repository: Repository, run: dict[str, Any]) -> list[dict[str, Any
         insert_at = next((index for index, step in enumerate(steps) if step["group"] == "COMPLETE"), len(steps))
         steps.insert(insert_at, mutation)
     verifier = _verifier_result(run)
-    if not any(step["group"] == "VERIFY" for step in steps) and verifier.get("outcome") in {"PASS", "FAIL"}:
+    phases = build_verifier_phases(verifier)
+    for phase in phases:
         steps.append(
             {
                 "group": "VERIFY",
-                "label": f"FULL VERIFY {verifier['outcome']}",
-                "detail": "verifier result",
+                "label": f"{phase['label']} {phase['status']}",
+                "detail": phase["detail"],
+                "source": "verifier",
+                "kind": "verification",
+            }
+        )
+    if not phases and not any(step["group"] == "VERIFY" for step in steps) and verifier.get("outcome") in {"PASS", "FAIL"}:
+        steps.append(
+            {
+                "group": "VERIFY",
+                "label": f"完整验证 {verifier['outcome']}",
+                "detail": "verifier 结果",
                 "source": "verifier",
                 "kind": "verification",
             }
@@ -473,13 +488,20 @@ def _configured_label(value: Any) -> str:
     return "默认配置" if value.lower() in {"default", "unknown"} else value
 
 
+def _identity_label(value: Any) -> str:
+    if value is None or str(value).upper() == UNKNOWN:
+        return UNKNOWN
+    return _configured_label(value)
+
+
 def _aggregate_metric(summaries: list[dict[str, Any]], key: str) -> float | None:
     return _mean([(summary.get("metrics") or {}).get(key) for summary in summaries])
 
 
 def _evidence_label(metrics: dict[str, Any]) -> str:
     if metrics.get("otel_events") is None:
-        return "未知"
+        native_events = metrics.get("native_events")
+        return f"native {_number_label(native_events, decimals=1)} 个事件" if native_events is not None else "未知"
     return (
         f"logs {_number_label(metrics.get('otel_logs'))} · "
         f"metrics {_number_label(metrics.get('otel_metrics'))} · "
@@ -548,7 +570,7 @@ def _comparison_row(
         "classification": result["classification"],
         "differential": differential,
         "target_run_id": target_run_id,
-        "trial_label": f"{result['passes']}/{result['total']} PASS",
+        "trial_label": result["display"],
         "duration_label": _seconds_label(_mean([summary.get("duration_seconds") for summary in summaries])),
         "otel_duration_label": _seconds_label(
             metric_values["otel_duration_ms"] / 1000 if metric_values["otel_duration_ms"] is not None else None
@@ -564,7 +586,7 @@ def _comparison_row(
         "tool_errors_label": _number_label(tool_errors),
         "changed_files_label": _number_label(changed_files, decimals=1),
         "evidence_label": _evidence_label(metric_values),
-        "evidence_note": "每次 trial 平均；OTel 缺失时保持未知",
+        "evidence_note": "每次 trial 平均；没有 OTel 时显示 native 事件数，无法观测时保持未知",
         "metrics": metric_values,
         "run_count": len(runs),
     }
@@ -581,6 +603,157 @@ def _variant_label_for_report(variant: dict[str, Any]) -> str:
     return label
 
 
+_PIVOT_VALUE_LABELS = {
+    "STABLE_PASS": "稳定通过",
+    "STABLE_FAIL": "稳定失败",
+    "FLAKY": "不稳定",
+    "ERROR": "运行错误",
+    "UNKNOWN": "结果不完整",
+}
+
+_PIVOT_TONES = {
+    "STABLE_PASS": "pass",
+    "STABLE_FAIL": "fail",
+    "FLAKY": "flaky",
+    "ERROR": "error",
+    "UNKNOWN": "unknown",
+}
+
+_VARIANT_PIVOT_DEFINITIONS = (
+    ("agent", "Agent 类型 / Variant", "identity"),
+    ("model", "Model", "identity"),
+    ("provider", "Provider", "identity"),
+    ("scope", "覆盖范围", "result"),
+    ("result", "Verifier 结果", "result"),
+    ("duration", "平均 Run 时长", "performance"),
+    ("otel_duration", "平均 OTel 时长", "performance"),
+    ("input_tokens", "平均输入 tokens", "tokens"),
+    ("output_tokens", "平均输出 tokens", "tokens"),
+    ("cache_read", "平均缓存读取 tokens", "tokens"),
+    ("cache_creation", "平均缓存创建 tokens", "tokens"),
+    ("total_tokens", "平均总 tokens", "tokens"),
+    ("cost", "平均成本", "cost"),
+    ("tool_calls", "平均工具调用", "behavior"),
+    ("model_calls", "平均模型轮数", "behavior"),
+    ("tool_errors", "平均工具错误", "behavior"),
+    ("changed_files", "平均变更文件", "behavior"),
+    ("evidence", "OTel / native 证据", "evidence"),
+)
+
+_CASE_PIVOT_DEFINITIONS = (
+    ("agent", "Agent 类型 / Variant", "identity"),
+    ("model", "Model", "identity"),
+    ("provider", "Provider", "identity"),
+    ("result", "Verifier 结果", "result"),
+    ("duration", "Run 时长", "performance"),
+    ("otel_duration", "OTel 时长", "performance"),
+    ("input_tokens", "输入 tokens", "tokens"),
+    ("output_tokens", "输出 tokens", "tokens"),
+    ("cache_read", "缓存读取 tokens", "tokens"),
+    ("cache_creation", "缓存创建 tokens", "tokens"),
+    ("total_tokens", "总 tokens", "tokens"),
+    ("cost", "成本", "cost"),
+    ("tool_calls", "工具调用", "behavior"),
+    ("model_calls", "模型轮数", "behavior"),
+    ("tool_errors", "工具错误", "behavior"),
+    ("changed_files", "变更文件", "behavior"),
+    ("evidence", "OTel / native 证据", "evidence"),
+)
+
+
+def _pivot_cell(row: dict[str, Any] | None, key: str) -> dict[str, Any]:
+    if not row:
+        return {"value": "未知", "detail": "没有对应 Run", "tone": "unknown"}
+    classification = str(row.get("classification") or "UNKNOWN")
+    # Only the verifier result carries a pass/fail meaning. Identity and cost
+    # cells must stay visually neutral; otherwise a passing Run would make
+    # every token/cost number look like a positive outcome.
+    tone = _PIVOT_TONES.get(classification, "unknown") if key == "result" else "neutral"
+    cell: dict[str, Any] = {"value": "未知", "detail": None, "tone": tone}
+    if key == "agent":
+        cell.update(value=row.get("agent_type") or "未知", detail=row.get("variant_label"))
+    elif key == "model":
+        cell.update(value=row.get("model") or "未知")
+        if row.get("configured_model") != row.get("model"):
+            cell["detail"] = f"配置：{row.get('configured_model') or '未知'}"
+    elif key == "provider":
+        cell.update(value=row.get("provider") or "未知")
+    elif key == "scope":
+        cell.update(value=f"{row.get('case_label', '1 个 Case')} / {row.get('run_count', 0)} 次")
+    elif key == "result":
+        cell.update(
+            value=row.get("trial_label") or "未知",
+            detail=_PIVOT_VALUE_LABELS.get(classification, classification),
+        )
+    elif key == "duration":
+        cell.update(value=row.get("duration_label") or "未知")
+    elif key == "otel_duration":
+        cell.update(value=row.get("otel_duration_label") or "未知")
+    elif key == "input_tokens":
+        cell.update(value=row.get("input_tokens_label") or "未知")
+    elif key == "output_tokens":
+        cell.update(value=row.get("output_tokens_label") or "未知")
+    elif key == "cache_read":
+        cell.update(value=row.get("cache_read_label") or "未知")
+    elif key == "cache_creation":
+        cell.update(value=row.get("cache_creation_label") or "未知")
+    elif key == "total_tokens":
+        cell.update(value=row.get("total_tokens_label") or "未知")
+    elif key == "cost":
+        cell.update(value=row.get("cost_label") or "未知")
+    elif key == "tool_calls":
+        cell.update(value=row.get("tool_calls_label") or "未知")
+    elif key == "model_calls":
+        cell.update(value=row.get("model_calls_label") or "未知")
+    elif key == "tool_errors":
+        cell.update(value=row.get("tool_errors_label") or "未知")
+    elif key == "changed_files":
+        cell.update(value=row.get("changed_files_label") or "未知")
+    elif key == "evidence":
+        cell.update(value=row.get("evidence_label") or "未知", detail=row.get("evidence_note"))
+
+    target_run_id = row.get("target_run_id")
+    if target_run_id:
+        cell["href"] = f"/runs/{target_run_id}{'/explorer' if row.get('result', {}).get('fails') else ''}"
+    return cell
+
+
+def _pivot_columns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": row["variant_id"],
+            "agent": row.get("agent_type") or row["variant_id"],
+            "label": row.get("variant_label") or row["variant_id"],
+        }
+        for row in rows
+    ]
+
+
+def _pivot_metric_rows(
+    rows: list[dict[str, Any]],
+    columns: list[dict[str, Any]],
+    definitions: tuple[tuple[str, str, str], ...],
+) -> list[dict[str, Any]]:
+    by_variant = {row["variant_id"]: row for row in rows}
+    return [
+        {
+            "key": key,
+            "label": label,
+            "group": group,
+            "values": [_pivot_cell(by_variant.get(column["id"]), key) for column in columns],
+        }
+        for key, label, group in definitions
+    ]
+
+
+def _case_state(rows: list[dict[str, Any]]) -> str:
+    if any(row.get("differential") for row in rows):
+        return "differential"
+    if any(row.get("classification") != "STABLE_PASS" for row in rows):
+        return "problem"
+    return "stable"
+
+
 def _summary_metric_value(summary: dict[str, Any], run: dict[str, Any], key: str) -> Any:
     if key == "agent":
         return (summary.get("identity") or {}).get("agent") or UNKNOWN
@@ -588,9 +761,9 @@ def _summary_metric_value(summary: dict[str, Any], run: dict[str, Any], key: str
         return (summary.get("identity") or {}).get("agent_version") or UNKNOWN
     if key == "model":
         models = (summary.get("metrics") or {}).get("models") or []
-        return ", ".join(models) if models else (summary.get("identity") or {}).get("model") or UNKNOWN
+        return ", ".join(models) if models else _identity_label((summary.get("identity") or {}).get("model"))
     if key == "provider":
-        return (summary.get("identity") or {}).get("provider") or UNKNOWN
+        return _identity_label((summary.get("identity") or {}).get("provider"))
     if key == "outcome":
         return summary.get("tests") or run.get("task_outcome") or UNKNOWN
     if key == "duration_seconds":
@@ -735,11 +908,42 @@ def build_experiment_comparison(
         row["case_label"] = f"{row['case_count']} 个 Case"
         variant_rows.append(row)
 
+    variant_columns = _pivot_columns(variant_rows)
+    variant_metric_rows = _pivot_metric_rows(variant_rows, variant_columns, _VARIANT_PIVOT_DEFINITIONS)
+    rows_by_case: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        rows_by_case[row["case_id"]].append(row)
+    case_comparisons: list[dict[str, Any]] = []
+    case_filter_options: list[dict[str, str]] = []
+    state_labels = {"differential": "差异", "problem": "失败 / 不稳定", "stable": "稳定通过"}
+    for case_id in matrix["case_ids"]:
+        case_rows = sorted(
+            rows_by_case.get(case_id, []),
+            key=lambda row: variant_order.index(row["variant_id"]) if row["variant_id"] in variant_order else 999,
+        )
+        if not case_rows:
+            continue
+        state = _case_state(case_rows)
+        case_comparisons.append(
+            {
+                "case_id": case_id,
+                "state": state,
+                "state_label": state_labels[state],
+                "metric_rows": _pivot_metric_rows(case_rows, variant_columns, _CASE_PIVOT_DEFINITIONS),
+            }
+        )
+        case_filter_options.append({"id": case_id, "label": case_id, "state": state})
+
     return {
         "variant_rows": variant_rows,
         "case_variant_rows": rows,
         "cell_lookup": {f"{row['case_id']}::{row['variant_id']}": row for row in rows},
-        "notes": "数值默认按每次 trial 平均；成本只在 Agent/OTel 实际提供时显示；未知不等于 0。",
+        "variant_columns": variant_columns,
+        "variant_metric_rows": variant_metric_rows,
+        "case_comparisons": case_comparisons,
+        "case_filter_options": case_filter_options,
+        "case_states": {option["id"]: option["state"] for option in case_filter_options},
+        "notes": "数值默认按每次 trial 平均；成本只在 Agent/OTel 实际提供时显示；没有 OTel 时保留 native 事件覆盖；未知不等于 0。",
     }
 
 
@@ -781,22 +985,24 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
     candidate_timeline = _timeline(repository, candidate)
     reference_timeline = _timeline(repository, reference)
     divergence = _meaningful_divergence_from_steps(candidate_timeline, reference_timeline)
-    if candidate.get("task_outcome") != reference.get("task_outcome"):
+    if divergence.get("reason") == "verifier outcome differs":
+        divergence["status"] = "VERIFIER_BOUNDARY"
+    if candidate.get("task_outcome") != reference.get("task_outcome") and divergence.get("status") == "NO_CLEAR_DIVERGENCE":
         candidate_outcome = candidate.get("task_outcome") or "UNKNOWN"
         reference_outcome = reference.get("task_outcome") or "UNKNOWN"
         divergence = {
-            "status": "DIVERGENCE",
+            "status": "VERIFIER_BOUNDARY",
             "reason": "verifier outcome differs",
             "candidate": {
                 "group": "VERIFY",
-                "label": f"FULL VERIFY {candidate_outcome}",
+                "label": f"完整验证 {candidate_outcome}",
                 "detail": "verifier 任务真值",
                 "source": "verifier",
                 "kind": "verification",
             },
             "reference": {
                 "group": "VERIFY",
-                "label": f"FULL VERIFY {reference_outcome}",
+                "label": f"完整验证 {reference_outcome}",
                 "detail": "verifier 任务真值",
                 "source": "verifier",
                 "kind": "verification",

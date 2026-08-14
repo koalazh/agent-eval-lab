@@ -162,7 +162,25 @@ def test_otel_message_records_do_not_look_like_agent_completion():
     steps = build_trajectory([event], [])
 
     assert view["events"][0]["operation"] == "Model 调用"
+    assert view["events"][0]["category"] == "model"
+    assert view["events"][0]["kind_label"] == "Model 调用"
     assert steps == []
+
+
+def test_verifier_phases_keep_checkpoint_evidence_separate_from_agent_trajectory():
+    from ael.trace_view import build_verifier_phases
+
+    phases = build_verifier_phases(
+        {
+            "outcome": "FAIL",
+            "stdout": "targeted verification: 1 passed, 1 deselected in 0.00s\nvisible full suite: 2 passed in 0.00s",
+            "stderr": "RuntimeError: pagination cursor did not advance from None while the server reported more pages",
+        }
+    )
+
+    assert [phase["label"] for phase in phases] == ["定向验证", "可见全量测试", "最终边界检查"]
+    assert phases[-1]["status"] == "FAIL"
+    assert "pagination cursor" in phases[-1]["detail"]
 
 
 def test_metric_snapshot_keeps_telemetry_fields_comparable_and_unknown_explicit():

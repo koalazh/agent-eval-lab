@@ -30,6 +30,7 @@ from .trace_view import (
     build_telemetry_overview,
     build_trace_view,
     build_trajectory,
+    build_verifier_phases,
 )
 
 
@@ -58,6 +59,8 @@ def create_app(root: str | Path = ".") -> FastAPI:
                 case = load_case(path)
             except (OSError, ValueError):
                 continue
+            if case.id == "verify-answer-001":
+                continue
             options[(case.id, case.revision)] = {
                 "id": case.id,
                 "revision": case.revision,
@@ -74,6 +77,8 @@ def create_app(root: str | Path = ".") -> FastAPI:
             if not _is_within(repository.root, source) or not source.is_file():
                 continue
             key = (row["id"], row["revision"])
+            if row["id"] == "verify-answer-001":
+                continue
             if key not in options:
                 options[key] = {
                     "id": row["id"],
@@ -232,6 +237,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             changes=changes,
             diff=_read_text(evidence / "workspace" / "diff.patch"),
             verifier=verifier,
+            verifier_phases=build_verifier_phases(verifier),
             telemetry=telemetry,
             native_events=native_events,
             otel_events=otel_events,
@@ -354,7 +360,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
 
     @app.get("/failures", response_class=HTMLResponse)
     async def failures_page(request: Request):
-        failures = _failure_rollups(repository.list_failures())
+        failures = _failure_rollups(repository.list_failures(), repository)
         return render(request, "failures.html", title="失败模式", failures=failures, failure_summary=_failure_summary(failures))
 
     @app.get("/failures/{failure_id}", response_class=HTMLResponse)
@@ -362,7 +368,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         failure = next(
             (
                 item
-                for item in _failure_rollups(repository.list_failures())
+                for item in _failure_rollups(repository.list_failures(), repository)
                 if failure_id in item.get("rollup_failure_ids", [])
             ),
             None,
@@ -372,6 +378,11 @@ def create_app(root: str | Path = ".") -> FastAPI:
         if not failure:
             return HTMLResponse("未找到失败记录", status_code=404)
         source_run = repository.get_run(failure["source_run_id"])
+        verifier = (source_run or {}).get("verifier") or {}
+        signature_source = failure["details"].get("verifier_signature_text") or " ".join(
+            str(verifier.get(key) or "") for key in ("stdout", "stderr")
+        )
+        failure["details"]["display_summary"] = _failure_display_summary(signature_source)
         explorer = compare_run_details(repository, source_run["id"]) if source_run else {}
         return render(request, "failure.html", title=f"失败模式 {failure_id}", failure=failure, explorer=explorer)
 
@@ -416,6 +427,8 @@ def _build_experiment(
             case = load_case(path)
         except (OSError, ValueError) as exc:
             raise ValueError(f"Case 不可用：{path}（{exc}）") from exc
+        if case.id == "verify-answer-001":
+            raise ValueError("旧 smoke Case 不属于真实编码任务 Case 实验路径")
         if case.id in selected_case_ids:
             raise ValueError(f"同一个 Case 只能选择一个 revision：{case.id}")
         selected_case_ids.add(case.id)
@@ -431,16 +444,16 @@ def _build_experiment(
         if agent_id == "custom-harness":
             command_text = first("custom_command")
             if not command_text:
-                raise ValueError("选择 Custom Harness 后必须提供真实可执行命令")
+                raise ValueError("选择自定义 Harness 后必须提供真实可执行命令")
             try:
                 command = shlex.split(command_text)
             except ValueError as exc:
-                raise ValueError(f"Custom Harness 命令不合法：{exc}") from exc
+                raise ValueError(f"自定义 Harness 命令不合法：{exc}") from exc
             if not command or not (Path(command[0]).exists() or shutil.which(command[0])):
-                raise ValueError(f"Custom Harness 命令不可执行：{command[0] if command else command_text}")
+                raise ValueError(f"自定义 Harness 命令不可执行：{command[0] if command else command_text}")
             custom_agent = Agent(
                 id="custom-harness",
-                display_name="Custom Harness",
+                display_name="自定义 Harness",
                 driver="custom",
                 binary=command[0],
                 detected_version="configured",
@@ -586,7 +599,7 @@ _FAILURE_STATUS_RANK = {
 }
 
 
-def _failure_rollups(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _failure_rollups(failures: list[dict[str, Any]], repository: Repository | None = None) -> list[dict[str, Any]]:
     """Present old per-run rows as case-revision patterns without mutating evidence."""
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for failure in failures:
@@ -642,6 +655,12 @@ def _failure_rollups(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "rollup_scope": "同一 Case revision / verifier signature",
             }
         )
+        signature_source = details.get("verifier_signature_text") or ""
+        if not signature_source and repository:
+            source_run = repository.get_run(str(representative.get("source_run_id") or ""))
+            verifier = (source_run or {}).get("verifier") or {}
+            signature_source = " ".join(str(verifier.get(key) or "") for key in ("stdout", "stderr"))
+        details["display_summary"] = _failure_display_summary(signature_source)
         aggregate["status"] = status
         aggregate["run_ids"] = run_ids
         aggregate["details"] = details
@@ -652,6 +671,21 @@ def _failure_rollups(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
         reverse=True,
     )
+
+
+def _failure_display_summary(value: Any) -> str:
+    """Turn verifier output into a compact product-facing failure signal."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return "未捕获 verifier 失败摘要"
+    match = re.search(r"([A-Za-z_][A-Za-z0-9_]*Error|AssertionError):\s*(.*?)(?=\s+File \"|$)", text)
+    if match:
+        return f"{match.group(1)}：{match.group(2)[:220]}"
+    failed_test = re.search(r"FAILED\s+([^\s]+)::([^\s]+)", text)
+    if failed_test:
+        return f"测试失败：{failed_test.group(1)}::{failed_test.group(2)}"
+    text = text.split(" Traceback", 1)[0].strip()
+    return text[:220]
 
 
 def _is_within(root: Path, candidate: Path) -> bool:

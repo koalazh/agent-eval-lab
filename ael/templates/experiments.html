@@ -4,17 +4,17 @@
   <div>
     <p class="eyebrow">Agent Eval Lab</p>
     <h1>研究一次 Agent 行为变化</h1>
-    <p class="home-lede">从同一组 Coding Cases 出发，选择 Agent / Model / 配置，运行多次试验，然后直接定位哪些 Case 在 Variant 之间不同。</p>
-    <div class="hero-actions"><a class="button" href="/experiments/new">开始一次实验</a><a class="button secondary" href="/cases">查看 Coding Cases</a></div>
+    <p class="home-lede">从同一组编码任务 Case 出发，选择 Agent / Model / 配置，运行多次试验，然后直接定位哪些 Case 在 Variant 之间不同。</p>
+    <div class="hero-actions"><a class="button" href="/experiments/new">开始一次实验</a><a class="button secondary" href="/cases">查看编码任务</a></div>
   </div>
-  <div class="home-illustration"><span class="home-illustration-label">核心路径 Golden Path</span><div class="home-path"><b>选择</b><i>→</i><b>运行</b><i>→</i><b>解释</b></div><p>Case → Variant → Evidence</p></div>
+  <div class="home-illustration"><span class="home-illustration-label">核心路径 Golden Path</span><div class="home-path"><b>选择</b><i>→</i><b>运行</b><i>→</i><b>解释</b></div><p>Case → Variant → 证据</p></div>
 </section>
 
 <section class="home-stats">
   <div><span>实验</span><strong>{{ experiments|length }}</strong><small>已创建</small></div>
   <div><span>运行中</span><strong>{{ running|length }}</strong><small>可实时查看</small></div>
   <div><span>最近实验</span><strong>{{ experiment_cards[0].pass_rate if experiment_cards else "0/0" }}</strong><small>最近一次通过率</small></div>
-  <div><span>含差异实验</span><strong>{{ experiment_cards|selectattr("differential_cases")|list|length }}</strong><small>需要 Failure Explorer</small></div>
+  <div><span>含差异实验</span><strong>{{ experiment_cards|selectattr("differential_cases")|list|length }}</strong><small>需要打开失败分析器</small></div>
 </section>
 
 {% if running %}
@@ -43,7 +43,7 @@
     <a class="experiment-card" href="/experiments/{{ experiment.id }}">
       <div class="experiment-card-top"><span class="pill status-pill-{{ experiment.status|lower }}">{{ experiment.status_label }}</span><span class="muted">{{ experiment.created_at_label }}</span></div>
       <h3>{{ experiment.id }}</h3>
-      <p class="muted">Suite · {{ experiment.suite_id }} <span class="dot">·</span> {{ experiment.trials }} 次试验 <span class="dot">·</span> {{ experiment.run_count }} 个 Run</p>
+      <p class="muted">测试套件 · {{ experiment.suite_id }} <span class="dot">·</span> {{ experiment.trials }} 次试验 <span class="dot">·</span> {{ experiment.run_count }} 个 Run</p>
       <div class="experiment-card-bottom"><strong>{{ experiment.pass_rate }} PASS</strong>{% if experiment.differential_cases %}<span class="differential-tag">{{ experiment.differential_cases|length }} 个差异 Case</span>{% else %}<span class="muted">未发现差异</span>{% endif %}</div>
     </a>
     {% endfor %}

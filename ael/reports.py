@@ -21,13 +21,16 @@ def trial_summary(outcomes: list[str]) -> dict[str, Any]:
         classification = "FLAKY"
     else:
         classification = "UNKNOWN"
+    display = f"{passes}/{total} PASS"
+    if unknown:
+        display += f" · {unknown} 次未知"
     return {
         "passes": passes,
         "fails": fails,
         "unknown": unknown,
         "total": total,
         "classification": classification,
-        "display": f"{passes}/{total} PASS",
+        "display": display,
     }
 
 

@@ -12,12 +12,12 @@
     {% for row in agents %}
     <article class="agent-catalog-card {% if not row.capabilities.available %}is-disabled{% endif %}">
       <div class="agent-catalog-head"><div><h3>{{ row.agent.display_name }}</h3><code>{{ row.agent.id }}</code></div><span class="pill {% if row.capabilities.available %}pill-success{% else %}pill-warning{% endif %}">{{ "可用" if row.capabilities.available else "不支持" }}</span></div>
-      <p class="agent-version">{{ row.agent.detected_version }}</p>
-      <div class="capability-pills"><span class="capability-pill">模型：{{ "可切换" if row.capabilities.supports_models else "默认配置" }}</span><span class="capability-pill">观测：{{ "OTel" if row.capabilities.supports_telemetry else "native / usage（原生 / 用量）" }}</span><span class="capability-pill">运行：{{ "受控（controlled）" if row.capabilities.supports_controlled else "原生（native）" }}</span></div>
+      <p class="agent-version">{{ "版本未探测到" if row.agent.detected_version == "UNKNOWN" else row.agent.detected_version }}</p>
+      <div class="capability-pills"><span class="capability-pill">模型：{{ "可切换" if row.capabilities.supports_models else "默认配置" }}</span><span class="capability-pill">观测：{{ "OTel" if row.capabilities.supports_telemetry else "原生运行 / 用量" }}</span><span class="capability-pill">运行：{{ "受控运行" if row.capabilities.supports_controlled else "原生运行" }}</span></div>
       <p class="agent-catalog-note">{{ row.capabilities.notes|join("；") }}</p>
     </article>
     {% endfor %}
   </div>
 </section>
-<section class="setup-detail-section"><details><summary><strong>展开原始能力表</strong><span class="muted">用于核对 CLI probe 结果</span></summary><table><tr><th>Agent</th><th>版本</th><th>可用性</th><th>Model</th><th>观测方式</th><th>说明</th></tr>{% for row in agents %}<tr><td><strong>{{ row.agent.display_name }}</strong></td><td>{{ row.agent.detected_version }}</td><td>{{ "可用" if row.capabilities.available else "不支持" }}</td><td>{{ "可切换" if row.capabilities.supports_models else "仅默认配置" }}</td><td>{{ "支持 OTel" if row.capabilities.supports_telemetry else "原生 / 用量" }}</td><td>{{ row.capabilities.notes|join("；") }}</td></tr>{% endfor %}</table></details></section>
+<section class="setup-detail-section"><details><summary><strong>展开原始能力表</strong><span class="muted">用于核对 CLI probe 结果</span></summary><table><tr><th>Agent</th><th>版本</th><th>可用性</th><th>Model</th><th>观测方式</th><th>说明</th></tr>{% for row in agents %}<tr><td><strong>{{ row.agent.display_name }}</strong></td><td>{{ "版本未探测到" if row.agent.detected_version == "UNKNOWN" else row.agent.detected_version }}</td><td>{{ "可用" if row.capabilities.available else "不支持" }}</td><td>{{ "可切换" if row.capabilities.supports_models else "仅默认配置" }}</td><td>{{ "支持 OTel" if row.capabilities.supports_telemetry else "原生 / 用量" }}</td><td>{{ row.capabilities.notes|join("；") }}</td></tr>{% endfor %}</table></details></section>
 {% endblock %}

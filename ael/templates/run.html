@@ -6,7 +6,7 @@
     <h1>{{ run.case_id }} <span class="muted">·</span> {{ run.variant_id }}</h1>
     <p class="muted">trial {{ run.trial }} <span class="dot">·</span> <code>{{ run.id }}</code></p>
   </div>
-  <a class="button secondary" href="/runs/{{ run.id }}/explorer">打开 Failure Explorer</a>
+  <a class="button secondary" href="/runs/{{ run.id }}/explorer">打开失败分析器</a>
 </section>
 
 <section class="run-scoreboard">
@@ -19,12 +19,12 @@
 <section class="trajectory-section">
   <div class="section-heading">
     <div>
-      <p class="eyebrow">行为摘要</p>
-      <h2>AEL trajectory（行为轨迹）</h2>
+    <p class="eyebrow">行为摘要</p>
+      <h2>行为轨迹 <span class="muted">trajectory</span></h2>
     </div>
     <span class="pill neutral">只基于可观察行为</span>
   </div>
-  <p class="section-lede">把 native、OTel、Verifier 和 Workspace 证据归纳成 READ / MUTATE / TOOL / VERIFY / COMPLETE 行为组。这里不推断 Agent 的 hidden reasoning。</p>
+  <p class="section-lede">把 native、OTel、Verifier 和 Workspace 证据归纳成 READ / MUTATE / TOOL / VERIFY / COMPLETE 行为组。这里不推断 Agent 的隐藏推理。</p>
   <div class="trajectory-track">
     {% for step in trajectory_steps %}
     <div class="trajectory-step trajectory-{{ step.group|lower }} {% if step.status_class == 'failed' %}is-failed{% endif %}">
@@ -41,7 +41,7 @@
       </div>
     </div>
     {% else %}
-    <div class="empty-state"><strong>没有足够的 trajectory 证据</strong><p>当前 Run 没有可归一化的行为组。请展开原始 evidence 检查 Agent 是否提供了可观察事件。</p></div>
+    <div class="empty-state"><strong>没有足够的 trajectory 证据</strong><p>当前 Run 没有可归一化的行为组。请展开原始证据检查 Agent 是否提供了可观察事件。</p></div>
     {% endfor %}
   </div>
 </section>
@@ -56,7 +56,7 @@
       {% if telemetry_overview.evidence == "real OTLP records correlated by ael.run.id" %}已按 ael.run.id 关联{% else %}证据不足{% endif %}
     </span>
   </div>
-  <p class="section-lede">摘要显示 Agent / Collector 实际提供的 model、tool、token、cost 和耗时；缺失信息保持为未知。OTel 的不同 signal 不混成一个数字。</p>
+    <p class="section-lede">摘要显示 Agent / Collector 实际提供的 Model、工具、Token、成本和耗时；缺失信息保持为未知。OTel 的不同 signal 不混成一个数字。</p>
   <div class="telemetry-cards">
     {% for card in telemetry_overview.cards %}
     <div class="telemetry-card"><span>{{ card.label }}</span><strong>{{ card.value }}</strong><small>{{ card.detail }}</small></div>
@@ -114,12 +114,38 @@
     <div class="trace-total"><span>总时长</span><strong>{{ trace_view.total_duration_label }}</strong></div>
   </div>
   <p class="section-lede">{{ trace_view.note }}</p>
+  <div class="trace-filter-bar" data-trace-filter-bar>
+    <label>事件视角
+      <select id="trace-category-filter">
+        <option value="all">全部事件</option>
+        <option value="tool">工具与命令</option>
+        <option value="model">Model 调用</option>
+        <option value="resource">Token / 成本</option>
+        <option value="change">文件变更</option>
+        <option value="verification">验证</option>
+        <option value="lifecycle">会话与生命周期</option>
+      </select>
+    </label>
+    <label>证据 signal
+      <select id="trace-signal-filter">
+        <option value="all">全部 signal</option>
+        <option value="logs">OTel logs</option>
+        <option value="metrics">OTel metrics</option>
+        <option value="traces">OTel traces / span</option>
+        <option value="native">native</option>
+      </select>
+    </label>
+    <label class="trace-filter-search">搜索操作或属性
+      <input id="trace-search" type="search" placeholder="例如：Model、Bash、tokens" autocomplete="off">
+    </label>
+    <span class="pill neutral" id="trace-filter-summary" aria-live="polite">显示全部事件</span>
+  </div>
   <div class="trace-legend"><span><i class="signal-dot signal-logs"></i> logs</span><span><i class="signal-dot signal-metrics"></i> metrics</span><span><i class="signal-dot signal-traces"></i> traces / span</span><span><i class="signal-dot signal-native"></i> native</span><span class="muted">点击任一行展开属性</span></div>
   <div class="trace-time-axis">{% for tick in trace_view.axis_ticks %}<span style="left: {{ tick.left }}%;">{{ tick.label }}</span>{% endfor %}</div>
   <div class="trace-waterfall">
     <div class="trace-axis"><span>时间</span><span>事件 / 操作</span><span>耗时</span></div>
     {% for event in trace_view.events %}
-    <details class="trace-row trace-signal-{{ event.signal }}">
+    <details class="trace-row trace-signal-{{ event.signal }}" data-trace-category="{{ event.category }}" data-trace-signal="{{ event.signal }}" data-trace-search="{{ event.operation }} {{ event.detail }} {{ event.kind_label }} {{ event.signal_label }}">
       <summary>
         <span class="trace-seq">{{ "%02d"|format(event.index) }}</span>
         <span class="trace-offset">{{ event.offset_label }}</span>
@@ -129,7 +155,7 @@
         <span class="trace-duration">{{ event.duration_label }}</span>
       </summary>
       <div class="trace-detail">
-        <div class="trace-detail-summary"><div><span class="muted">可观察说明</span><p>{{ event.detail }}</p></div><div><span class="muted">事件类型 event kind</span><p><code>{{ event.kind }}</code> · {% if event.is_span %}真实 trace span{% else %}event / sample（事件 / 样本）{% endif %}</p>{% if event.is_span %}<p><span class="muted">Span 上下文</span><br><code>trace {{ event.trace_id or "未知" }}</code><br><code>span {{ event.span_id or "未知" }}</code><br><code>parent {{ event.parent_span_id or "无" }}</code>{% if event.span_kind %}<br><code>kind {{ event.span_kind }}</code>{% endif %}{% if event.span_event_count is not none %}<br><code>{{ event.span_event_count }} 个 span event</code>{% endif %}</p>{% endif %}</div></div>
+        <div class="trace-detail-summary"><div><span class="muted">可观察说明</span><p>{{ event.detail }}</p></div><div><span class="muted">事件类型 kind</span><p><code>{{ event.kind }}</code> · {% if event.is_span %}真实 trace span{% else %}event / sample（事件 / 样本）{% endif %}</p>{% if event.is_span %}<p><span class="muted">Span 上下文</span><br><code>trace {{ event.trace_id or "未知" }}</code><br><code>span {{ event.span_id or "未知" }}</code><br><code>parent {{ event.parent_span_id or "无" }}</code>{% if event.span_kind %}<br><code>kind {{ event.span_kind }}</code>{% endif %}{% if event.span_event_count is not none %}<br><code>{{ event.span_event_count }} 个 span event</code>{% endif %}</p>{% endif %}</div></div>
         {% if event.attributes %}
         <table class="attribute-table"><thead><tr><th>属性</th><th>值</th></tr></thead><tbody>{% for attribute in event.attributes %}<tr><td><code>{{ attribute.key }}</code></td><td>{{ attribute.value }}</td></tr>{% endfor %}</tbody></table>
         {% else %}<p class="muted">没有可安全展示的结构化属性；原始证据仍可在页面底部展开。</p>{% endif %}
@@ -138,17 +164,55 @@
     {% else %}
     <div class="empty-state"><strong>没有关联的 OTel / native event</strong><p>当前页面不会把缺失证据渲染成伪造 trace。</p></div>
     {% endfor %}
+    <div class="empty-state" id="trace-filter-empty" hidden>当前筛选没有符合条件的事件。</div>
   </div>
 </section>
 
 <section class="two-col evidence-detail-section">
-  <div class="card verifier-card"><div class="subsection-title"><strong>Verifier（任务真值）</strong><span class="result-chip result-{{ verifier.get("outcome", "UNKNOWN")|lower }}">{{ verifier.get("outcome", "UNKNOWN") }}</span></div><p class="muted">{{ verifier.get("duration_seconds", "未知") }} 秒 · verifier 决定任务是否完成</p><details><summary>展开 Verifier 输出</summary><pre>{{ verifier.get("stdout", "") }}{{ verifier.get("stderr", "") }}</pre></details></div>
+  <div class="card verifier-card">
+    <div class="subsection-title"><strong>Verifier（任务真值）</strong><span class="result-chip result-{{ verifier.get("outcome", "UNKNOWN")|lower }}">{{ verifier.get("outcome", "UNKNOWN") }}</span></div>
+    <p class="muted">{{ verifier.get("duration_seconds", "未知") }} 秒 · verifier 决定任务是否完成</p>
+    {% if verifier_phases %}
+    <div class="verifier-phase-panel"><div class="subsection-title"><strong>Verifier 检查阶段</strong><span class="muted">来自 stdout / stderr，不代表 Agent 执行轨迹</span></div><table class="verifier-phase-table"><thead><tr><th>阶段</th><th>结果</th><th>观察到的输出</th></tr></thead><tbody>{% for phase in verifier_phases %}<tr><th>{{ phase.label }}</th><td class="status-{{ phase.status_class }}">{{ phase.status }}</td><td>{{ phase.detail }}</td></tr>{% endfor %}</tbody></table></div>
+    {% endif %}
+    <details><summary>展开 Verifier 输出</summary><pre>{{ verifier.get("stdout", "") }}{{ verifier.get("stderr", "") }}</pre></details>
+  </div>
   <div class="card workspace-card"><div class="subsection-title"><strong>Workspace（环境真值）</strong><span class="muted">{{ visible_changed_files|length }} 个有效变更</span></div><p>{{ visible_changed_files|join(", ") or "没有有效变更文件" }}</p><details><summary>展开产物 diff</summary><pre>{{ diff }}</pre></details></div>
 </section>
 
 <section class="raw-section">
-  <div class="section-heading"><div><p class="eyebrow">原始 evidence</p><h2>原始证据</h2></div><span class="muted">只在需要核对底层记录时展开</span></div>
+  <div class="section-heading"><div><p class="eyebrow">原始证据</p><h2>原始证据</h2></div><span class="muted">只在需要核对底层记录时展开</span></div>
   <details><summary>Collector ingest 后的 OTel 原始记录</summary><pre>{{ otel_raw }}</pre></details>
   <details><summary>Agent native 原始记录</summary><pre>{{ native_raw }}</pre></details>
 </section>
+<script>
+(() => {
+  const category = document.getElementById("trace-category-filter");
+  const signal = document.getElementById("trace-signal-filter");
+  const search = document.getElementById("trace-search");
+  const summary = document.getElementById("trace-filter-summary");
+  const empty = document.getElementById("trace-filter-empty");
+  const rows = [...document.querySelectorAll(".trace-row[data-trace-category]")];
+
+  function applyTraceFilters() {
+    const categoryValue = category?.value || "all";
+    const signalValue = signal?.value || "all";
+    const query = (search?.value || "").trim().toLowerCase();
+    rows.forEach((row) => {
+      const matchesCategory = categoryValue === "all" || row.dataset.traceCategory === categoryValue;
+      const matchesSignal = signalValue === "all" || row.dataset.traceSignal === signalValue;
+      const matchesSearch = !query || row.dataset.traceSearch.toLowerCase().includes(query);
+      row.hidden = !(matchesCategory && matchesSignal && matchesSearch);
+    });
+    const visible = rows.filter((row) => !row.hidden).length;
+    if (empty) empty.hidden = visible !== 0;
+    if (summary) summary.textContent = `显示 ${visible} / ${rows.length} 条事件`;
+  }
+
+  category?.addEventListener("change", applyTraceFilters);
+  signal?.addEventListener("change", applyTraceFilters);
+  search?.addEventListener("input", applyTraceFilters);
+  applyTraceFilters();
+})();
+</script>
 {% endblock %}

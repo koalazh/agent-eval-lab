@@ -1,24 +1,62 @@
 {% extends "base.html" %}
 {% block content %}
 {% set status_labels = {"OBSERVED": "已观察", "REPRODUCED": "已复现", "FIXED": "已修复", "REGRESSION_GUARDED": "已加入回归保护"} %}
-<section class="failure-hero"><div><p class="eyebrow">Failure Pattern / 失败模式</p><h1>失败模式</h1><p class="home-lede">一个失败模式（Failure Pattern）可以关联多个真实 Run。这里关注可复现的行为模式，而不是把每个 FAIL Run 单独当成一条记录。</p></div><a class="button secondary" href="/experiments/new">运行实验找差异</a></section>
+<section class="failure-hero"><div><p class="eyebrow">失败模式库</p><h1>失败模式</h1><p class="home-lede">一个失败模式可以关联多个真实 Run。这里关注可复现的行为模式，而不是把每个 FAIL Run 单独当成一条记录。</p></div><a class="button secondary" href="/experiments/new">运行实验找差异</a></section>
 <section class="failure-summary">
-  <div><span>失败模式</span><strong>{{ failure_summary.total }}</strong><small>按 Case revision 聚类</small></div>
+  <div><span>失败模式</span><strong>{{ failure_summary.total }}</strong><small>按 Case 版本聚类</small></div>
   <div><span>已观察</span><strong>{{ failure_summary.observed }}</strong><small>首次观察</small></div>
   <div><span>已修复</span><strong>{{ failure_summary.fixed }}</strong><small>后续实验已修复</small></div>
-  <div><span>回归保护</span><strong>{{ failure_summary.guarded }}</strong><small>已固定 Case revision</small></div>
+  <div><span>回归保护</span><strong>{{ failure_summary.guarded }}</strong><small>已固定 Case 版本</small></div>
 </section>
-<section class="failure-list-section"><div class="section-heading"><div><p class="eyebrow">Failure Book / 失败模式库</p><h2>失败模式库</h2></div><span class="muted">同一 Case revision 的重复记录会在此合并展示</span></div>
+<section class="failure-list-section"><div class="section-heading"><div><p class="eyebrow">失败模式库</p><h2>失败模式库</h2></div><span class="muted" id="failure-filter-summary">显示全部失败模式</span></div>
+  <div class="failure-filter-bar">
+    <label>生命周期
+      <select id="failure-status-filter"><option value="all">全部状态</option><option value="observed">已观察</option><option value="reproduced">已复现</option><option value="fixed">已修复</option><option value="regression_guarded">回归保护</option></select>
+    </label>
+    <label>搜索 Case 或失败信号
+      <input id="failure-search" type="search" placeholder="例如：premature、cursor、KeyError" autocomplete="off">
+    </label>
+    <button class="button secondary" id="failure-filter-reset" type="button">重置筛选</button>
+  </div>
+  <p class="failure-filter-help">失败模式按 Case 版本和 verifier 签名合并；筛选只改变当前列表，不删除历史证据。</p>
   {% if not failures %}<div class="empty-state"><strong>还没有观察到失败</strong><p>运行一个真实实验后，只有进程完成且 Verifier 返回 FAIL 的 Run 才会进入失败模式库。</p></div>{% endif %}
   <div class="failure-card-grid">
     {% for failure in failures %}
-    <a class="failure-card" href="/failures/{{ failure.id }}">
+    <a class="failure-card" href="/failures/{{ failure.id }}" data-failure-status="{{ failure.status|lower }}" data-failure-search="{{ failure.details.get('case_id', '') }} {{ failure.details.get('display_summary', '') }}">
       <div class="failure-card-head"><span class="failure-status status-{{ failure.status|lower }}">{{ status_labels.get(failure.status, failure.status) }}</span><span class="muted">{{ failure.details.get("run_count", 1) }} 个 Run</span></div>
       <h3>{{ failure.details.get("case_id", "未知 Case") }}</h3>
-      <p class="failure-signature">{{ failure.signature[:16] }}…</p>
-      <div class="failure-card-meta"><span>{{ failure.details.get("variant_ids", [failure.details.get("variant_id", "未知 Variant")])|join(", ") }}</span><span>{% if failure.details.get("rollup_count", 1) > 1 %}已合并 {{ failure.details.get("rollup_count") }} 条旧记录{% else %}{{ status_labels.get(failure.status, failure.status) }}{% endif %}</span></div>
+      {% if failure.details.get("case_id") == "verify-answer-001" %}<span class="legacy-tag">历史 smoke Case · 仅保留历史证据，不进入新实验</span>{% endif %}
+      <p class="failure-signature">{{ failure.details.get("display_summary", "未知 verifier 失败") }}</p>
+      <div class="failure-card-meta"><span>{{ failure.details.get("variant_ids", [failure.details.get("variant_id", "未知 Variant")])|length }} 个受影响 Variant · Case 版本 {{ failure.details.get("case_revision", "未知")[:10] }}</span><span>{% if failure.details.get("rollup_count", 1) > 1 %}已合并 {{ failure.details.get("rollup_count") }} 条旧记录{% else %}{{ status_labels.get(failure.status, failure.status) }}{% endif %}</span></div>
     </a>
     {% endfor %}
   </div>
+  <div class="empty-state" id="failure-filter-empty" hidden>当前筛选没有符合条件的失败模式。</div>
 </section>
+<script>
+(() => {
+  const status = document.getElementById("failure-status-filter");
+  const search = document.getElementById("failure-search");
+  const reset = document.getElementById("failure-filter-reset");
+  const summary = document.getElementById("failure-filter-summary");
+  const empty = document.getElementById("failure-filter-empty");
+  const cards = [...document.querySelectorAll(".failure-card[data-failure-status]")];
+  function apply() {
+    const selected = status?.value || "all";
+    const query = (search?.value || "").trim().toLowerCase();
+    cards.forEach((card) => {
+      const matchesStatus = selected === "all" || card.dataset.failureStatus === selected;
+      const matchesSearch = !query || card.dataset.failureSearch.toLowerCase().includes(query);
+      card.hidden = !(matchesStatus && matchesSearch);
+    });
+    const visible = cards.filter((card) => !card.hidden).length;
+    if (empty) empty.hidden = visible !== 0;
+    if (summary) summary.textContent = `显示 ${visible} / ${cards.length} 个失败模式`;
+  }
+  status?.addEventListener("change", apply);
+  search?.addEventListener("input", apply);
+  reset?.addEventListener("click", () => { if (status) status.value = "all"; if (search) search.value = ""; apply(); });
+  apply();
+})();
+</script>
 {% endblock %}

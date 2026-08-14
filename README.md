@@ -9,7 +9,7 @@
 
 **把失败变成下一次实验。**
 
-AEL 是一个本地优先的 Coding Agent 实验平台。它让同一批 Case（用例）在不同 Agent Variant（智能体变体）和 Trial（试验轮次）上运行，由独立 verifier（验证器）判断任务真值，保存工作区与原生证据，并把真实失败沉淀为后续实验。
+AEL 是一个本地优先的 Coding Agent 实验平台。它让同一批 Case（用例）在不同 Agent Variant（智能体变体）和试验轮次上运行，由独立 verifier（验证器）判断任务真值，保存工作区与原生证据，并把真实失败沉淀为后续实验。
 
 ## 开发
 
@@ -35,7 +35,7 @@ AEL 将原生输出和归一化事件与验证器真值分开保存：
 
 ## 当前机器探测
 
-当前只读 M1 探测在本机发现 Codex CLI 0.147.0、Claude Code 2.1.229 和 Hermes 0.20.0。Pi 当前不在 PATH 中，因此会记录为不可用；AEL 不会静默安装或模拟缺失的 Agent。
+当前只读探测在本机发现 Codex CLI 0.147.0、Claude Code 2.1.229 和 Hermes 0.20.0。Pi 当前不在 PATH 中，因此会记录为不可用；AEL 不会静默安装或模拟缺失的 Agent。
 
 真实 driver（驱动）使用当前 CLI 的机器接口：Codex `exec --json`、Claude 非交互 `stream JSON`、Pi RPC JSONL，以及带 usage 文件的 Hermes oneshot。每个 Run 的原生输出都保存在自己的原生证据目录中。
 
@@ -55,7 +55,9 @@ Model/Provider（或保留 `默认配置`），设置试验次数/并发数，�
 `运行实验`。实验详情页的主体是 Case × Variant 矩阵；每个单元格都链接到
 对应真实 Run。不可用的 Agent 会保持“已禁用”，不会被当作验收证据。
 
-实验详情页现在提供两层对比：上层 Case × Variant 矩阵负责快速发现稳定通过、稳定失败、不稳定和差异；下层 `Variant 总览` 与 `Case × Variant 指标明细` 用表格逐项展示 Agent 类型、Model、Provider、通过率、端到端耗时、OTel 耗时、Input/Output/Cache/Total tokens、成本、工具调用、模型轮数、工具错误、变更文件和 OTel signal 证据。表格中的数值默认是每次 trial 平均，未知不会用 0 代替；点击矩阵单元格仍可进入具体 Run 或 Failure Explorer。
+实验详情页现在提供两层对比：上层 Case × Variant 矩阵负责快速发现稳定通过、稳定失败、不稳定和差异；下层 `Variant 总览` 与 `Case × Variant 指标明细` 用表格逐项展示 Agent 类型、Model、Provider、通过率、端到端耗时、OTel 耗时、输入/输出/缓存/总 tokens、成本、工具调用、模型轮数、工具错误、变更文件和 OTel signal 证据。表格中的数值默认是每次 trial 平均，未知不会用 0 代替；点击矩阵单元格仍可进入具体 Run 或失败分析器。
+
+比较页面还可以按“差异 Case”“失败 / 不稳定”“资源成本”“证据覆盖”以及单个 Case 聚焦；筛选会同步收窄矩阵、指标行和 Case 对比卡片。指标采用“行 = 指标、列 = Variant”的阅读方式，适合横向比较大量资源与行为数据，而不是把 aggregate leaderboard 当成主体。
 
 仓库中不会保存凭据。缺失 CLI、provider（提供方）不可用、认证错误或速率限制会记录为基础设施/进程证据，不会被提升为 Agent 任务失败。
 
@@ -63,8 +65,8 @@ Model/Provider（或保留 `默认配置`），设置试验次数/并发数，�
 Builder（构建器）创建，包含 3 个 Case、Codex / Claude Code / Hermes 3 个真实 Variant、2 次试验，
 共 18 个 Run；18 个 Run 都完成了进程和 verifier 判定，最终 17 PASS / 1 FAIL。二维矩阵中
 `premature-completion` 为 DIFFERENTIAL：Codex 2/2 PASS、Hermes 2/2 PASS、Claude Code
-1/2 PASS；另外两个 Case 均为 3 个 Variant 稳定通过。这个 Case 的可见 targeted/full
-suite 都通过后，Claude 在 hidden valid-empty-cursor boundary 上失败，证据保存在对应 Run
+1/2 PASS；另外两个 Case 均为 3 个 Variant 稳定通过。这个 Case 的可见定向测试和完整测试套件
+都通过后，Claude 在隐藏的 valid-empty-cursor 边界上失败，证据保存在对应 Run
 的 verifier/workspace/native 目录中。实际执行工作区位于仓库外临时目录，Golden
 fixture 在整次真实实验后保持原始 revision。
 
@@ -100,12 +102,12 @@ Claude Code，只有提供 `AEL_OTEL_ENDPOINT` 时，`telemetry` 才会通过单
 Run 页面会把这些证据分成几个可互相核对的视角：
 
 - `AEL trajectory`：只按真实观察到的 READ / MUTATE / TOOL / VERIFY / COMPLETE 强锚点归纳行为；不把
-  hidden reasoning 当成事实；
+  隐藏推理当成事实；
 - `Telemetry` 摘要：显示 Model 调用、工具调用、输入/输出/总 tokens、缓存、成本、工具错误、活跃时长、Model、Collector
   records 和 signal 分布；
 - `OTel trace / event` 瀑布：按时间偏移、耗时、operation、状态和安全属性展开每条 log、metric 或真实
   span；点击事件可以查看属性，原始 JSONL 只在页面底部按需展开；
-- `Failure Explorer`：把 Candidate 与 PASS reference 的强行为组局部对齐，并单独显示 Verifier、
+- 失败分析器（Failure Explorer）：把候选与 PASS reference 的强行为组局部对齐，并单独显示 Verifier、
   Workspace、native 和 OTel 的证据覆盖；顶部另有逐项指标表，直接比较时延、token、成本、工具调用和证据覆盖。
 
 AEL 遵循 OpenTelemetry 的 signal 边界：log、metric 和 trace span 不互相冒充。当前 Claude Code
@@ -140,15 +142,15 @@ AEL 聚焦于矩阵执行、差异比较、证据融合、失败调查、失败�
 
 ## 差异证据
 
-确定性的 Failure Explorer（失败分析器）会先检查 Case revision，再选择最接近的 PASS 参考运行，并展示 SAME/CHANGED/UNKNOWN 变量、`CONTROLLED`/`PARTIAL`/`DESCRIPTIVE` 置信度、verifier/workspace 证据、归一化锚点时间线和首次有意义的分歧。如果参考 Run 或锚点证据不足，系统会明确说明，不会编造因果根因。
+确定性的失败分析器会先检查 Case revision，再选择最接近的 PASS 参考运行，并展示 SAME/CHANGED/UNKNOWN 变量、`CONTROLLED`/`PARTIAL`/`DESCRIPTIVE` 置信度、verifier/workspace 证据、归一化锚点时间线和首次有意义的分歧。如果参考 Run 或锚点证据不足，系统会明确说明，不会编造因果根因。
 
-Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。Failure Explorer（失败分析器）的 Follow-up Builder（后续实验构建器）会在同一 Case revision 上生成可编辑的 baseline/candidate 两个 Variant，真正写入 `verification_gate`、`run_mode` 或 Agent 变化后再运行，不需要用户离开 AEL 修改 YAML。
+Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。失败分析器的 Follow-up Builder（后续实验构建器）会在同一 Case revision 上生成可编辑的 baseline/candidate 两个 Variant，真正写入 `verification_gate`、`run_mode` 或 Agent 变化后再运行，不需要用户离开 AEL 修改 YAML。
 
 ## 失败记录簿（Failure Book）
 
 只有进程已完成且 verifier 返回 FAIL 的记录才会进入失败记录簿，并以 `OBSERVED` 开始；相同 Case revision 和 verifier signature 的重复失败会归并到同一 Failure Pattern，关联多个 Run，并在重复出现后变为 `REPRODUCED`。
 
-阶段 C 的真实 Web 验收记录（2026-08-14）：从 Failure Explorer 打开 Follow-up Builder（后续实验构建器），保持
+阶段 C 的真实 Web 验收记录（2026-08-14）：从失败分析器打开 Follow-up Builder（后续实验构建器），保持
 Claude Code、Model、3 个 Golden Case 和 `controlled` 观测配置不变，生成
 `verification_gate=false` 的 baseline 与 `verification_gate=true` 的 candidate。第一次真实复验实验
 `follow-up-golden-phase-a-final-75ae939d-f0dab3c6-6ede65` 完成 12 个 Claude Code Run；baseline
@@ -171,7 +173,7 @@ Case 均 PASS；原始 Failure `failure-f0dab3c6f17a4447b392513d2ccc26a4` 随之
 
 该示例会产生稳定通过和稳定失败两类结果。
 
-对于已经持久化的实验，可以执行 `uv run ael compare <experiment-a> <experiment-b> --root .`，再从本地 UI 打开对应 Run 的 Failure Explorer。AEL 将数据库和大型证据写入 `.ael/`，该目录已被 Git 忽略。
+对于已经持久化的实验，可以执行 `uv run ael compare <experiment-a> <experiment-b> --root .`，再从本地 UI 打开对应 Run 的失败分析器。AEL 将数据库和大型证据写入 `.ael/`，该目录已被 Git 忽略。
 
 ## 许可
 

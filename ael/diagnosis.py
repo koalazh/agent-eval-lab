@@ -15,6 +15,12 @@ from .persistence import Repository
 from .redaction import redact
 
 
+def _display_values(value: Any) -> str:
+    if isinstance(value, (list, tuple, set)):
+        return "、".join(str(item) for item in value) or "无"
+    return str(value)
+
+
 def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any]:
     details = compare_run_details(repository, run_id)
     if not details:
@@ -22,8 +28,9 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
     candidate = details.get("candidate", {})
     candidate_summary = details.get("candidate_summary") or {}
     reference_summary = details.get("reference_summary") or {}
+    status_labels = {"PENDING": "等待运行", "RUNNING": "运行中", "COMPLETED": "已完成", "ERROR": "运行错误"}
     observed = [
-        f"Candidate 进程状态为 {candidate.get('status', 'UNKNOWN')}。",
+        f"候选进程状态为 {status_labels.get(candidate.get('status'), candidate.get('status', '未知'))}。",
         f"Verifier 任务真值为 {candidate.get('outcome', 'UNKNOWN')}。",
     ]
     evidence: list[str] = []
@@ -33,25 +40,25 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
     changes = artifact.get("changes", {})
     changed_files = details.get("artifact_diff", {}).get("meaningful_changed_files", [])
     if changed_files:
-        evidence.append(f"Candidate workspace 观察到变化文件：{changed_files}。")
+        evidence.append(f"候选 workspace 观察到变化文件：{_display_values(changed_files)}。")
     else:
-        evidence.append("Candidate workspace 没有观察到文件变化。")
+        evidence.append("候选 workspace 没有观察到文件变化。")
     if details.get("matched_reference"):
         reference_id = details["matched_reference"]["run_id"]
         evidence.append(f"匹配的 PASS 参考：{reference_id}。")
         scope = details.get("variable_scope") or {}
         if scope.get("changed"):
-            evidence.append(f"已记录的变化变量：{scope['changed']}。")
+            evidence.append(f"已记录的变化变量：{_display_values(scope['changed'])}。")
         if scope.get("same"):
-            counter_evidence.append(f"已记录的固定变量：{scope['same']}。")
+            counter_evidence.append(f"已记录的固定变量：{_display_values(scope['same'])}。")
         if reference_summary:
             evidence.append(
                 f"参考 verifier={reference_summary.get('tests', 'UNKNOWN')}；"
-                f"变更文件={reference_summary.get('changed_files', [])}。"
+                f"变更文件={_display_values(reference_summary.get('changed_files', []))}。"
             )
             if candidate.get("outcome") != reference_summary.get("outcome"):
                 evidence.append(
-                    f"Candidate verifier={candidate.get('outcome', 'UNKNOWN')}；"
+                    f"候选 verifier={candidate.get('outcome', 'UNKNOWN')}；"
                     f"参考 verifier={reference_summary.get('outcome', 'UNKNOWN')}。"
                 )
     else:
@@ -61,21 +68,33 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
         left = divergence.get("candidate") or {}
         right = divergence.get("reference") or {}
         evidence.append(
-            f"首个有意义的分歧：Candidate {left.get('label', '—')} / "
+            f"首个有意义的分歧：候选 {left.get('label', '—')} / "
             f"参考 {right.get('label', '—')}。"
         )
         if divergence.get("reason") == "verifier outcome differs":
             observed.append(
-                f"Candidate 观察到 {left.get('label', 'FULL VERIFY UNKNOWN')}；"
-                f"参考观察到 {right.get('label', 'FULL VERIFY UNKNOWN')}。"
+                f"候选观察到 {left.get('label', '完整验证未知')}；"
+                f"参考观察到 {right.get('label', '完整验证未知')}。"
             )
         else:
             observed.append(
-                f"Candidate 观察到行为={left.get('detail', '没有')}；"
+                f"候选观察到行为={left.get('detail', '没有')}；"
                 f"参考观察到行为={right.get('detail', '没有')}。"
             )
+    elif divergence.get("status") == "VERIFIER_BOUNDARY":
+        left = divergence.get("candidate") or {}
+        right = divergence.get("reference") or {}
+        observed.append(
+            f"Verifier 阶段结果不同：候选 {left.get('label', '未知')}；"
+            f"参考 {right.get('label', '未知')}。"
+        )
+        evidence.append(
+            f"Verifier 阶段证据：候选={left.get('detail', '未知')}；"
+            f"参考={right.get('detail', '未知')}。"
+        )
+        unknowns.append("可观察行为组没有找到可靠分歧；当前只能定位到 verifier 边界。")
     else:
-        unknowns.append("Action-group 对齐没有找到可靠的有意义分歧。")
+        unknowns.append("行为组对齐没有找到可靠的有意义分歧。")
     coverage = details.get("evidence_coverage", {})
     coverage_labels = {
         "Outcome": "结果",
@@ -93,15 +112,16 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
     if otel.get("events"):
         evidence.append(f"Claude/OTel 关联事件：{otel['events']}，来源={otel.get('source', 'unknown')}。")
     else:
-        unknowns.append("Candidate 没有已关联的 OTel 记录。")
-    if divergence.get("reason") == "verifier outcome differs":
+        unknowns.append("候选没有已关联的 OTel 记录。")
+    if divergence.get("status") == "VERIFIER_BOUNDARY" or divergence.get("reason") == "verifier outcome differs":
         hypothesis_text = (
-            "Candidate 与 PASS 参考的任务真值不同；当前可确认的是 verifier boundary "
-            "差异，artifact / action 证据可用于提出下一次实验，但不能单独证明因果。"
+            "候选与 PASS 参考的任务真值不同；当前可确认的是 verifier 边界差异，"
+            "但没有可靠的行为组分歧。产物 / verifier 输出可用于提出下一次实验，"
+            "不能单独证明因果。"
         )
     elif divergence.get("status") == "DIVERGENCE":
         hypothesis_text = (
-            "Candidate 与 PASS 参考在可观察 action group 上不同；这与 completion/repair "
+            "候选与 PASS 参考在可观察行为组上不同；这与完成 / 修复 "
             "路径差异一致，但当前证据不能证明单一因果。"
         )
     else:
@@ -111,7 +131,7 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
             "statement": hypothesis_text,
             "evidence": evidence,
             "counter_evidence": counter_evidence,
-            "certainty": "基于证据的 hypothesis；不输出因果概率",
+            "certainty": "基于证据的假设；不输出因果概率",
         }
     ]
     changed = ((details.get("variable_scope") or {}).get("changed") or [])
@@ -122,7 +142,7 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
         "evidence": evidence,
         "counter_evidence": counter_evidence,
         "unknowns": sorted(set(unknowns)),
-        "suggested_improvement": "保持 Agent、Case revision 和 observation 固定，编辑一个真实会改变 driver 行为的 independent variable 后重跑。",
+        "suggested_improvement": "保持 Agent、Case 版本和观测配置固定，编辑一个真实会改变 driver 行为的独立变量后重跑。",
         "best_next_experiment": {
             "status": "DRAFT",
             "requires_user_confirmation": True,
