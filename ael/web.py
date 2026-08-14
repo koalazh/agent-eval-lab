@@ -91,7 +91,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         return render(
             request,
             "experiments.html",
-            title="Lab",
+            title="实验室",
             experiments=experiments,
             running=[item for item in experiments if item["status"] in {"PENDING", "RUNNING"}],
             recent=experiments[:8],
@@ -99,11 +99,11 @@ def create_app(root: str | Path = ".") -> FastAPI:
 
     @app.get("/agents", response_class=HTMLResponse)
     async def agents_page(request: Request):
-        return render(request, "agents.html", title="Agents", agents=agent_rows())
+        return render(request, "agents.html", title="Agent 配置", agents=agent_rows())
 
     @app.get("/cases", response_class=HTMLResponse)
     async def cases_page(request: Request):
-        return render(request, "cases.html", title="Cases", cases=case_options())
+        return render(request, "cases.html", title="Case 配置", cases=case_options())
 
     @app.get("/experiments", response_class=HTMLResponse)
     async def experiments_page(request: Request):
@@ -111,7 +111,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         return render(
             request,
             "experiments.html",
-            title="Lab",
+            title="实验室",
             experiments=experiments,
             running=[item for item in experiments if item["status"] in {"PENDING", "RUNNING"}],
             recent=experiments[:8],
@@ -123,7 +123,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         return render(
             request,
             "new_experiment.html",
-            title="New Experiment",
+            title="新建实验",
             agents=rows,
             cases=case_options(),
             selected_cases=[],
@@ -147,7 +147,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             return render(
                 request,
                 "new_experiment.html",
-                title="New Experiment",
+                title="新建实验",
                 agents=rows,
                 cases=case_options(),
                 selected_cases=form.get("case_path", []),
@@ -245,7 +245,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         return render(
             request,
             "follow_up.html",
-            title="Follow-up Experiment",
+            title="后续实验",
             run_id=run_id,
             draft=draft,
             agents=agent_rows(),
@@ -288,7 +288,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             return render(
                 request,
                 "follow_up.html",
-                title="Follow-up Experiment",
+                title="后续实验",
                 run_id=run_id,
                 draft=draft,
                 agents=agent_rows(),
@@ -301,7 +301,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
 
     @app.get("/failures", response_class=HTMLResponse)
     async def failures_page(request: Request):
-        return render(request, "failures.html", title="Failure Patterns", failures=repository.list_failures())
+        return render(request, "failures.html", title="失败模式", failures=repository.list_failures())
 
     @app.get("/failures/{failure_id}", response_class=HTMLResponse)
     async def failure_page(request: Request, failure_id: str):
@@ -367,9 +367,9 @@ def _build_experiment(
             try:
                 command = shlex.split(command_text)
             except ValueError as exc:
-                raise ValueError(f"Custom Harness command 不合法：{exc}") from exc
+                raise ValueError(f"Custom Harness 命令不合法：{exc}") from exc
             if not command or not (Path(command[0]).exists() or shutil.which(command[0])):
-                raise ValueError(f"Custom Harness command 不可执行：{command[0] if command else command_text}")
+                raise ValueError(f"Custom Harness 命令不可执行：{command[0] if command else command_text}")
             custom_agent = Agent(
                 id="custom-harness",
                 display_name="Custom Harness",
@@ -405,19 +405,19 @@ def _build_experiment(
         model = first(f"model_{agent_id}", "default") or "default"
         provider = first(f"provider_{agent_id}", "default") or "default"
         if model.lower() not in {"default", "unknown"} and not capability.get("supports_models"):
-            raise ValueError(f"{agent_id} 不支持 model switching；不能创建该组合")
+            raise ValueError(f"{agent_id} 不支持模型切换；不能创建该组合")
         try:
             run_mode = RunMode(first(f"run_mode_{agent_id}", "native"))
             observation_profile = ObservationProfile(first(f"observation_profile_{agent_id}", "minimal"))
         except ValueError as exc:
-            raise ValueError(f"{agent_id} 的 run mode 或 observation profile 不合法") from exc
+            raise ValueError(f"{agent_id} 的运行模式或观测配置不合法") from exc
         config_text = first(f"config_{agent_id}", "")
         try:
             harness_config = json.loads(config_text) if config_text else {}
         except json.JSONDecodeError as exc:
-            raise ValueError(f"{agent_id} 的 Agent config 必须是 JSON object") from exc
+            raise ValueError(f"{agent_id} 的 Agent 配置必须是 JSON 对象") from exc
         if not isinstance(harness_config, dict):
-            raise ValueError(f"{agent_id} 的 Agent config 必须是 JSON object")
+            raise ValueError(f"{agent_id} 的 Agent 配置必须是 JSON 对象")
         model_slug = _slug(model if model.lower() not in {"default", "unknown"} else "default")
         variants.append(
             AgentVariant(
@@ -455,7 +455,7 @@ def _build_experiment(
 def _variant_label(variant: dict[str, Any]) -> str:
     agent = variant.get("agent_id") or variant.get("id") or "Variant"
     model = variant.get("model") or "default"
-    label = f"{agent} / {('Default configured' if str(model).lower() in {'default', 'unknown'} else model)}"
+    label = f"{agent} / {('默认配置' if str(model).lower() in {'default', 'unknown'} else model)}"
     config = variant.get("harness_config") or {}
     if config.get("verification_gate") is True:
         label += " · verification_gate=on"

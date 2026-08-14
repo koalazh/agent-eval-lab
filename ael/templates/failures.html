@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Failure Patterns</h1>
-<p class="muted">一个 pattern 可以关联多个真实 Runs；只有进程完成且 verifier 返回 FAIL 才会进入记录簿。</p>
+<h1>失败模式</h1>
+<p class="muted">一个 Failure Pattern 可以关联多个真实 Run；只有进程完成且 verifier 返回 FAIL 才会进入记录簿。</p>
 {% if not failures %}<p>还没有观察到失败。</p>{% endif %}
 <table>
-  <tr><th>Pattern</th><th>Status</th><th>Runs</th><th>Cases / Variants</th><th>Lifecycle</th></tr>
+  <tr><th>模式</th><th>状态</th><th>Run 数</th><th>Case / Variant</th><th>生命周期</th></tr>
   {% for failure in failures %}
   <tr>
     <td><a href="/failures/{{ failure.id }}"><code>{{ failure.id }}</code></a></td>

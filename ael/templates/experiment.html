@@ -2,17 +2,17 @@
 {% if experiment.status in ["PENDING", "RUNNING"] %}<meta http-equiv="refresh" content="3">{% endif %}
 {% block content %}
 <section class="hero">
-  <div><p class="muted">LAB / EXPERIMENT</p><h1>{{ experiment_id }}</h1><p class="muted">{{ experiment.suite_id }} · {{ experiment.status }} · created {{ experiment.created_at }}</p></div>
-  <a class="button secondary" href="/experiments/new">New Experiment</a>
+  <div><p class="muted">实验室 / 实验</p><h1>{{ experiment_id }}</h1><p class="muted">{{ experiment.suite_id }} · {{ experiment.status }} · 创建于 {{ experiment.created_at }}</p></div>
+  <a class="button secondary" href="/experiments/new">新建实验</a>
 </section>
 <section class="grid">
-  <div class="metric"><span class="muted">Status</span><strong>{{ experiment.status }}</strong></div>
-  <div class="metric"><span class="muted">Runs</span><strong>{{ matrix.runs }}</strong></div>
-  <div class="metric"><span class="muted">Pass rate</span><strong>{{ matrix.summary.pass_rate }}</strong></div>
-  <div class="metric"><span class="muted">Cases × Variants</span><strong>{{ matrix.case_ids|length }} × {{ matrix.variant_ids|length }}</strong></div>
+  <div class="metric"><span class="muted">状态</span><strong>{{ experiment.status }}</strong></div>
+  <div class="metric"><span class="muted">Run 数</span><strong>{{ matrix.runs }}</strong></div>
+  <div class="metric"><span class="muted">通过率</span><strong>{{ matrix.summary.pass_rate }}</strong></div>
+  <div class="metric"><span class="muted">Case × Variant</span><strong>{{ matrix.case_ids|length }} × {{ matrix.variant_ids|length }}</strong></div>
 </section>
 <section class="matrix">
-  <div class="hero"><div><h2>Case × Variant</h2><p class="muted">点击 cell 查看对应 Run；紫色表示该 Case 在 variants 之间有 differential。</p></div></div>
+  <div class="hero"><div><h2>Case × Variant 矩阵</h2><p class="muted">点击单元格查看对应 Run；紫色表示该 Case 在 Variant 之间存在 differential。</p></div></div>
   {% if matrix.matrix_rows %}
   <table>
     <tr><th>Case</th>{% for column in matrix.columns %}<th>{{ column.label }}</th>{% endfor %}</tr>
@@ -38,7 +38,7 @@
 <section>
   <h2>Runs</h2>
   <table>
-    <tr><th>Run</th><th>Case</th><th>Variant</th><th>Trial</th><th>Status</th><th>Result</th></tr>
+    <tr><th>Run</th><th>Case</th><th>Variant</th><th>Trial</th><th>状态</th><th>结果</th></tr>
     {% for run in runs %}
     <tr><td><a href="/runs/{{ run.id }}"><code>{{ run.id[:12] }}</code></a></td><td>{{ run.case_id }}</td><td>{{ run.variant_id }}</td><td>{{ run.trial }}</td><td>{{ run.run_status }}</td><td class="{{ run.task_outcome }}">{{ run.task_outcome }}</td></tr>
     {% endfor %}

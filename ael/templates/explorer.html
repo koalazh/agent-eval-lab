@@ -1,49 +1,51 @@
 {% extends "base.html" %}
 {% block content %}
+{% set coverage_labels = {"Outcome": "结果", "Workspace": "工作区", "Tool timeline": "工具时间线", "Token usage": "Token 用量", "Model calls": "Model 调用", "Compaction event": "Compaction 事件", "Subagent lifecycle": "Subagent 生命周期"} %}
 <section class="hero">
-  <div><p class="muted">FAILURE EXPLORER</p><h1>Candidate vs PASS reference</h1><p class="muted">Run <code>{{ explorer.run_id }}</code> · 同一 Case revision 的可观察证据</p></div>
-  <a class="button secondary" href="/runs/{{ explorer.run_id }}">Run evidence</a>
+  <div><p class="muted">失败分析器</p><h1>Candidate 与 PASS 参考</h1><p class="muted">Run <code>{{ explorer.run_id }}</code> · 同一 Case revision 的可观察证据</p></div>
+  <a class="button secondary" href="/runs/{{ explorer.run_id }}">Run 证据</a>
 </section>
 
 <section class="two-col">
-  {% for label, summary in [("Candidate", explorer.candidate_summary), ("Matched PASS Reference", explorer.reference_summary)] %}
+  {% for label, summary in [("Candidate", explorer.candidate_summary), ("匹配的 PASS 参考", explorer.reference_summary)] %}
   <div class="card">
     <p class="muted">{{ label }}</p>
     {% if summary %}
     <h2 class="{{ summary.outcome }}">{{ summary.outcome }}</h2>
     <div class="grid">
-      <div class="metric"><span class="muted">Tests</span><strong>{{ summary.tests }}</strong></div>
-      <div class="metric"><span class="muted">Duration</span><strong>{{ summary.duration_seconds or "unknown" }}s</strong></div>
-      <div class="metric"><span class="muted">Tool calls</span><strong>{{ summary.tool_calls }}</strong></div>
-      <div class="metric"><span class="muted">Changed files</span><strong>{{ summary.changed_files|length }}</strong></div>
+      <div class="metric"><span class="muted">测试</span><strong>{{ summary.tests }}</strong></div>
+      <div class="metric"><span class="muted">时长</span><strong>{{ summary.duration_seconds or "unknown" }} 秒</strong></div>
+      <div class="metric"><span class="muted">工具调用</span><strong>{{ summary.tool_calls }}</strong></div>
+      <div class="metric"><span class="muted">变更文件</span><strong>{{ summary.changed_files|length }}</strong></div>
     </div>
-    <p class="muted">Tokens: {{ summary.tokens.input or "unknown" }} in / {{ summary.tokens.output or "unknown" }} out</p>
-    {% if summary.otel and summary.otel.events %}<p class="pill">OTel {{ summary.otel.events }} events · {{ summary.otel.evidence }}</p>{% endif %}
-    {% else %}<p class="unknown">No suitable PASS reference.</p>{% endif %}
+    <p class="muted">Tokens：输入 {{ summary.tokens.input or "unknown" }} / 输出 {{ summary.tokens.output or "unknown" }}</p>
+    {% if summary.otel and summary.otel.events %}<p class="pill">OTel {{ summary.otel.events }} 个事件 · {{ "已按 ael.run.id 关联真实 OTLP 记录" if summary.otel.evidence == "real OTLP records correlated by ael.run.id" else "证据不足" if summary.otel.evidence == "insufficient evidence" else summary.otel.evidence }}</p>{% endif %}
+    {% else %}<p class="unknown">没有合适的 PASS 参考。</p>{% endif %}
   </div>
   {% endfor %}
 </section>
 
 <section>
-  <p class="muted">KEY DIFFERENCE</p>
+  <p class="muted">关键差异</p>
   {% set divergence = explorer.first_meaningful_divergence %}
   {% if divergence.status == "DIVERGENCE" %}
-  <h2>First meaningful divergence</h2>
+  <h2>首个有意义的分歧</h2>
   <div class="two-col">
-    <div class="metric"><span class="muted">Candidate</span><strong>{{ (divergence.candidate or {}).label or "—" }}</strong><p>{{ (divergence.candidate or {}).detail or "No observed action" }}</p></div>
-    <div class="metric"><span class="muted">Reference</span><strong>{{ (divergence.reference or {}).label or "—" }}</strong><p>{{ (divergence.reference or {}).detail or "No observed action" }}</p></div>
+    <div class="metric"><span class="muted">Candidate</span><strong>{{ (divergence.candidate or {}).label or "—" }}</strong><p>{{ (divergence.candidate or {}).detail or "没有可观察行为" }}</p></div>
+    <div class="metric"><span class="muted">参考</span><strong>{{ (divergence.reference or {}).label or "—" }}</strong><p>{{ (divergence.reference or {}).detail or "没有可观察行为" }}</p></div>
   </div>
-  <p class="muted">{{ divergence.reason }} · 只基于 workspace / verifier / native / OTel 的可观察行为。</p>
+  {% set divergence_reasons = {"verifier outcome differs": "verifier 结果不同", "unmatched strong action group": "强行为组未匹配", "same action group has different observed outcome": "同一行为组的可观察结果不同"} %}
+  <p class="muted">{{ divergence_reasons.get(divergence.reason, divergence.reason) }} · 只基于 workspace / verifier / native / OTel 的可观察行为。</p>
   {% else %}
-  <h2>NO CLEAR DIVERGENCE</h2>
+  <h2>没有明确分歧（NO CLEAR DIVERGENCE）</h2>
   <p class="muted">当前证据不足以可靠定位双方的行为分歧；AEL 不推断 hidden reasoning。</p>
   {% endif %}
 </section>
 
 <section>
-  <h2>Action timeline</h2>
+  <h2>行为时间线</h2>
   <table>
-    <tr><th>Candidate</th><th>Matched PASS Reference</th></tr>
+    <tr><th>Candidate</th><th>匹配的 PASS 参考</th></tr>
     {% for row in timeline_rows %}
     <tr>
       <td>{% if row.candidate %}<span class="pill">{{ row.candidate.group }}</span> <strong>{{ row.candidate.label }}</strong><br><span class="muted">{{ row.candidate.detail }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
@@ -54,27 +56,27 @@
 </section>
 
 <section>
-  <h2>Evidence</h2>
-  <div class="grid">{% for name, value in explorer.evidence_coverage.items() %}<div class="metric"><span>{{ name }}</span><strong>{{ value }}</strong></div>{% endfor %}</div>
-  <p><strong>Candidate changed files:</strong> {{ explorer.candidate_summary.changed_files|join(", ") or "none" }}</p>
-  <details><summary>Artifact diff</summary><pre>{{ explorer.artifact_diff.diff }}</pre></details>
-  {% if explorer.artifact_diff.candidate_reference_diff %}<details><summary>Candidate vs PASS implementation diff</summary><pre>{{ explorer.artifact_diff.candidate_reference_diff }}</pre></details>{% endif %}
-  <details><summary>Raw candidate evidence</summary><pre>{{ candidate_raw }}</pre></details>
-  <details><summary>Raw PASS reference evidence</summary><pre>{{ reference_raw }}</pre></details>
+  <h2>证据</h2>
+  <div class="grid">{% for name, value in explorer.evidence_coverage.items() %}<div class="metric"><span>{{ coverage_labels.get(name, name) }}</span><strong>{{ value }}</strong></div>{% endfor %}</div>
+  <p><strong>Candidate 变更文件：</strong> {{ explorer.candidate_summary.changed_files|join(", ") or "没有" }}</p>
+  <details><summary>产物 diff</summary><pre>{{ explorer.artifact_diff.diff }}</pre></details>
+  {% if explorer.artifact_diff.candidate_reference_diff %}<details><summary>Candidate 与 PASS 实现 diff</summary><pre>{{ explorer.artifact_diff.candidate_reference_diff }}</pre></details>{% endif %}
+  <details><summary>Candidate 原始证据</summary><pre>{{ candidate_raw }}</pre></details>
+  <details><summary>PASS 参考原始证据</summary><pre>{{ reference_raw }}</pre></details>
 </section>
 
 <section>
-  <h2>Diagnosis</h2>
-  <p><strong>Observed</strong></p>
+  <h2>诊断</h2>
+  <p><strong>观察到的事实</strong></p>
   <ul>{% for item in diagnosis.observed %}<li>{{ item }}</li>{% endfor %}</ul>
   {% for hypothesis in diagnosis.hypotheses %}
-  <div class="metric"><strong>Hypothesis</strong><p>{{ hypothesis.statement }}</p><p class="muted">{{ hypothesis.certainty }}</p></div>
+  <div class="metric"><strong>假设</strong><p>{{ hypothesis.statement }}</p><p class="muted">{{ hypothesis.certainty }}</p></div>
   {% endfor %}
-  <p><strong>Evidence</strong></p>
+  <p><strong>证据</strong></p>
   <ul>{% for item in diagnosis.evidence %}<li>{{ item }}</li>{% endfor %}</ul>
-  <p><strong>Counter-evidence / Unknown</strong></p>
+  <p><strong>反证 / 未知</strong></p>
   <ul>{% for item in diagnosis.counter_evidence + diagnosis.unknowns %}<li>{{ item }}</li>{% endfor %}</ul>
-  <p><strong>Suggested engineering change:</strong> {{ diagnosis.suggested_improvement }}</p>
-  <a class="button" href="/runs/{{ explorer.run_id }}/follow-up/new">Create editable follow-up</a>
+  <p><strong>建议的工程变更：</strong> {{ diagnosis.suggested_improvement }}</p>
+  <a class="button" href="/runs/{{ explorer.run_id }}/follow-up/new">创建可编辑的后续实验</a>
 </section>
 {% endblock %}

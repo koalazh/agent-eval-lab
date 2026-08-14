@@ -32,13 +32,13 @@ def evidence_coverage(
     usage: dict[str, Any],
 ) -> dict[str, str]:
     return {
-        "Outcome": "✓" if outcome != TaskOutcome.UNKNOWN else "✗",
-        "Workspace": "✓" if changes is not None else "✗",
-        "Tool timeline": "✓" if any(event.kind in {"tool_call", "tool_result", "command"} for event in events) else "?",
-        "Token usage": "✓" if usage else "?",
-        "Model calls": "✓" if any(event.source == "otel" for event in events) else "?",
-        "Compaction event": "✓" if any("compact" in (event.name or "").lower() for event in events) else "?",
-        "Subagent lifecycle": "✓" if any("subagent" in (event.name or "").lower() for event in events) else "?",
+        "结果": "✓" if outcome != TaskOutcome.UNKNOWN else "✗",
+        "工作区": "✓" if changes is not None else "✗",
+        "工具时间线": "✓" if any(event.kind in {"tool_call", "tool_result", "command"} for event in events) else "?",
+        "Token 用量": "✓" if usage else "?",
+        "Model 调用": "✓" if any(event.source == "otel" for event in events) else "?",
+        "Compaction 事件": "✓" if any("compact" in (event.name or "").lower() for event in events) else "?",
+        "Subagent 生命周期": "✓" if any("subagent" in (event.name or "").lower() for event in events) else "?",
     }
 
 

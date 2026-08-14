@@ -10,7 +10,14 @@ from ael.web import _build_experiment, create_app
 
 def test_server_rendered_navigation_on_empty_repository(tmp_path):
     client = TestClient(create_app(tmp_path))
-    assert client.get("/").status_code == 200
+    home = client.get("/")
+    assert home.status_code == 200
+    assert "新建实验" in home.text
+    assert "New Experiment" not in home.text
+    builder = client.get("/experiments/new")
+    assert builder.status_code == 200
+    assert "运行实验" in builder.text
+    assert "Run experiment" not in builder.text
     assert client.get("/agents").status_code == 200
     assert client.get("/cases").status_code == 200
     assert client.get("/experiments").status_code == 200

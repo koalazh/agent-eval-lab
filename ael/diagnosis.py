@@ -23,8 +23,8 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
     candidate_summary = details.get("candidate_summary") or {}
     reference_summary = details.get("reference_summary") or {}
     observed = [
-        f"Candidate process 状态为 {candidate.get('status', 'UNKNOWN')}。",
-        f"Verifier task truth 为 {candidate.get('outcome', 'UNKNOWN')}。",
+        f"Candidate 进程状态为 {candidate.get('status', 'UNKNOWN')}。",
+        f"Verifier 任务真值为 {candidate.get('outcome', 'UNKNOWN')}。",
     ]
     evidence: list[str] = []
     counter_evidence: list[str] = []
@@ -38,21 +38,21 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
         evidence.append("Candidate workspace 没有观察到文件变化。")
     if details.get("matched_reference"):
         reference_id = details["matched_reference"]["run_id"]
-        evidence.append(f"Matched PASS reference：{reference_id}。")
+        evidence.append(f"匹配的 PASS 参考：{reference_id}。")
         scope = details.get("variable_scope") or {}
         if scope.get("changed"):
-            evidence.append(f"Recorded changed variables：{scope['changed']}。")
+            evidence.append(f"已记录的变化变量：{scope['changed']}。")
         if scope.get("same"):
-            counter_evidence.append(f"Recorded fixed variables：{scope['same']}。")
+            counter_evidence.append(f"已记录的固定变量：{scope['same']}。")
         if reference_summary:
             evidence.append(
-                f"Reference verifier={reference_summary.get('tests', 'UNKNOWN')}；"
-                f"changed_files={reference_summary.get('changed_files', [])}。"
+                f"参考 verifier={reference_summary.get('tests', 'UNKNOWN')}；"
+                f"变更文件={reference_summary.get('changed_files', [])}。"
             )
             if candidate.get("outcome") != reference_summary.get("outcome"):
                 evidence.append(
                     f"Candidate verifier={candidate.get('outcome', 'UNKNOWN')}；"
-                    f"Reference verifier={reference_summary.get('outcome', 'UNKNOWN')}。"
+                    f"参考 verifier={reference_summary.get('outcome', 'UNKNOWN')}。"
                 )
     else:
         unknowns.append("没有足够接近且 revision 相同的 PASS reference。")
@@ -61,38 +61,47 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
         left = divergence.get("candidate") or {}
         right = divergence.get("reference") or {}
         evidence.append(
-            f"First meaningful divergence：Candidate {left.get('label', '—')} / "
-            f"Reference {right.get('label', '—')}。"
+            f"首个有意义的分歧：Candidate {left.get('label', '—')} / "
+            f"参考 {right.get('label', '—')}。"
         )
         if divergence.get("reason") == "verifier outcome differs":
             observed.append(
-                f"Candidate observed {left.get('label', 'FULL VERIFY UNKNOWN')}；"
-                f"reference observed {right.get('label', 'FULL VERIFY UNKNOWN')}。"
+                f"Candidate 观察到 {left.get('label', 'FULL VERIFY UNKNOWN')}；"
+                f"参考观察到 {right.get('label', 'FULL VERIFY UNKNOWN')}。"
             )
         else:
             observed.append(
-                f"Candidate observed action={left.get('detail', 'none')}；"
-                f"reference observed action={right.get('detail', 'none')}。"
+                f"Candidate 观察到行为={left.get('detail', '没有')}；"
+                f"参考观察到行为={right.get('detail', '没有')}。"
             )
     else:
-        unknowns.append("Action-group alignment 没有找到可靠的有意义分歧。")
+        unknowns.append("Action-group 对齐没有找到可靠的有意义分歧。")
     coverage = details.get("evidence_coverage", {})
+    coverage_labels = {
+        "Outcome": "结果",
+        "Workspace": "工作区",
+        "Tool timeline": "工具时间线",
+        "Token usage": "Token 用量",
+        "Model calls": "Model 调用",
+        "Compaction event": "Compaction 事件",
+        "Subagent lifecycle": "Subagent 生命周期",
+    }
     for name, value in coverage.items():
         if value in {"?", "✗"}:
-            unknowns.append(f"{name} 的 evidence coverage 为 {value}。")
+            unknowns.append(f"{coverage_labels.get(name, name)} 的证据覆盖为 {value}。")
     otel = candidate_summary.get("otel") or {}
     if otel.get("events"):
-        evidence.append(f"Claude/OTel correlated events：{otel['events']}，source={otel.get('source', 'unknown')}。")
+        evidence.append(f"Claude/OTel 关联事件：{otel['events']}，来源={otel.get('source', 'unknown')}。")
     else:
-        unknowns.append("Candidate 没有 correlated OTel records。")
+        unknowns.append("Candidate 没有已关联的 OTel 记录。")
     if divergence.get("reason") == "verifier outcome differs":
         hypothesis_text = (
-            "Candidate 与 PASS reference 的 task truth 不同；当前可确认的是 verifier boundary "
-            "差异，artifact / action evidence 可用于提出下一次实验，但不能单独证明因果。"
+            "Candidate 与 PASS 参考的任务真值不同；当前可确认的是 verifier boundary "
+            "差异，artifact / action 证据可用于提出下一次实验，但不能单独证明因果。"
         )
     elif divergence.get("status") == "DIVERGENCE":
         hypothesis_text = (
-            "Candidate 与 PASS reference 在可观察 action group 上不同；这与 completion/repair "
+            "Candidate 与 PASS 参考在可观察 action group 上不同；这与 completion/repair "
             "路径差异一致，但当前证据不能证明单一因果。"
         )
     else:
@@ -102,11 +111,11 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
             "statement": hypothesis_text,
             "evidence": evidence,
             "counter_evidence": counter_evidence,
-            "certainty": "evidence-grounded hypothesis；不输出因果概率",
+            "certainty": "基于证据的 hypothesis；不输出因果概率",
         }
     ]
     changed = ((details.get("variable_scope") or {}).get("changed") or [])
-    proposed_variable = changed[0] if len(changed) == 1 else "Run mode"
+    proposed_variable = changed[0] if len(changed) == 1 else "运行模式（run_mode）"
     return {
         "observed": observed,
         "hypotheses": hypotheses,
@@ -226,7 +235,7 @@ def create_follow_up_experiment(
         raise ValueError(f"未找到运行记录：{run_id}")
     definition = repository.read_experiment_definition(run["experiment_id"])
     if not definition:
-        raise ValueError("源 experiment definition 不可用，无法创建可运行的后续实验")
+        raise ValueError("源实验 definition 不可用，无法创建可运行的后续实验")
     suite_id = str((definition.get("suite") or {}).get("id") or "follow-up")
     cases = tuple(repository.suite_cases(suite_id))
     if not cases:
@@ -242,10 +251,10 @@ def create_follow_up_experiment(
         raise ValueError("源 Variant 不在原 experiment definition 中")
     source_variant = _variant_from_definition(source_raw)
     if independent_variable not in {"verification_gate", "run_mode", "agent"}:
-        raise ValueError("当前 Follow-up Builder 只支持 verification_gate、run_mode 或 agent")
+        raise ValueError("当前 Follow-up Builder 只支持 verification_gate、run_mode 或 Agent")
     if independent_variable == "agent":
         if not candidate_agent_id:
-            raise ValueError("Agent ablation 必须选择 candidate Agent")
+            raise ValueError("Agent 消融必须选择 candidate Agent")
         candidate_agent = candidate_agent_id
     else:
         candidate_agent = source_variant.agent_id

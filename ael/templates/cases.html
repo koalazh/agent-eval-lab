@@ -1,5 +1,5 @@
 {% extends "base.html" %}
 {% block content %}
-<section><p class="muted">SETUP / CASES</p><h1>Coding Cases</h1><p class="muted">Immutable revision/hash 是 verifier task truth 的入口。</p></section>
-<div class="two-col">{% for case in cases %}<article class="card"><h2>{{ case.id }}</h2><span class="pill">revision {{ case.revision[:12] }}</span><p>{{ case.prompt }}</p><small class="muted">{{ case.relative_path }} · timeout {{ case.timeout_seconds }}s</small></article>{% else %}<p class="muted">还没有 Case。</p>{% endfor %}</div>
+<section><p class="muted">配置 / Case</p><h1>Coding Case</h1><p class="muted">Immutable revision/hash 是 verifier（验证器）任务真值的入口。</p></section>
+<div class="two-col">{% for case in cases %}<article class="card"><h2>{{ case.id }}</h2><span class="pill">revision {{ case.revision[:12] }}</span><p>{{ case.prompt }}</p><small class="muted">{{ case.relative_path }} · 超时 {{ case.timeout_seconds }} 秒</small></article>{% else %}<p class="muted">还没有 Case。</p>{% endfor %}</div>
 {% endblock %}

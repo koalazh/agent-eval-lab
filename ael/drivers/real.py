@@ -186,7 +186,7 @@ class CodexDriver(BinaryAgentDriver):
             controlled_support="full",
             supports_telemetry=False,
             supports_deep=True,
-            notes=("当前 CLI help 提供 exec --json 以及 per-run config/sandbox 参数。",),
+            notes=("当前 CLI help 提供 exec --json，以及按 Run 配置 config/sandbox 的参数。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
@@ -247,7 +247,7 @@ class ClaudeCodeDriver(BinaryAgentDriver):
             controlled_support="full",
             supports_telemetry=True,
             supports_deep=True,
-            notes=("当前 CLI help 提供 print、stream-json、safe-mode 和 no-session-persistence。",),
+            notes=("当前 CLI help 提供 print、stream-json、safe-mode 和 no-session-persistence 参数。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
@@ -323,7 +323,7 @@ class PiDriver(BinaryAgentDriver):
             controlled_support="partial",
             supports_telemetry=False,
             supports_deep=True,
-            notes=("RPC protocol 是当前 native JSONL；controlled context-file isolation 取决于当前 CLI 参数。",),
+            notes=("RPC protocol 是当前 native JSONL；controlled 的 context/file isolation 取决于当前 CLI 参数。",),
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:

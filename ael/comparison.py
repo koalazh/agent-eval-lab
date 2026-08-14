@@ -13,20 +13,20 @@ from .reports import matrix_report, trial_summary
 
 _FINGERPRINT_FIELDS = (
     ("agent_id", "Agent"),
-    ("agent_version", "Agent version"),
+    ("agent_version", "Agent 版本"),
     ("driver", "Driver"),
-    ("driver_version", "Driver version"),
+    ("driver_version", "Driver 版本"),
     ("model", "Model"),
     ("provider", "Provider"),
-    ("model_config", "Model config"),
-    ("harness_config_hash", "Harness config"),
-    ("run_mode", "Run mode"),
-    ("observation_profile", "Observation profile"),
+    ("model_config", "Model 配置"),
+    ("harness_config_hash", "Harness 配置"),
+    ("run_mode", "运行模式"),
+    ("observation_profile", "观测配置"),
     ("runtime", "Runtime"),
     ("case_revision", "Case revision"),
     ("prompt_hash", "Prompt"),
     ("fixture_hash", "Fixture"),
-    ("ael_version", "AEL version"),
+    ("ael_version", "AEL 版本"),
     ("git_sha", "Git SHA"),
 )
 
@@ -57,14 +57,14 @@ def variable_scope(
 def _expected_scope(scope: dict[str, Any]) -> str:
     changed = set(scope["changed"])
     if changed == {"Model"}:
-        return "Model Differential"
-    if changed and changed <= {"Agent", "Driver", "Agent version", "Driver version"}:
-        return "Harness Differential"
-    if changed == {"Harness config"}:
-        return "Feature Differential"
-    if changed == {"Agent version", "Driver version"}:
-        return "Version Differential"
-    return "Descriptive"
+        return "Model 差异"
+    if changed and changed <= {"Agent", "Driver", "Agent 版本", "Driver 版本"}:
+        return "Harness 差异"
+    if changed == {"Harness 配置"}:
+        return "Feature 差异"
+    if changed == {"Agent 版本", "Driver 版本"}:
+        return "版本差异"
+    return "描述性差异"
 
 
 def comparison_confidence(scope: dict[str, Any]) -> str:
@@ -75,9 +75,9 @@ def comparison_confidence(scope: dict[str, Any]) -> str:
         return "CONTROLLED"
     if changed in (
         {"Model"},
-        {"Harness config"},
+        {"Harness 配置"},
         {"Agent", "Driver"},
-        {"Agent version", "Driver version"},
+        {"Agent 版本", "Driver 版本"},
     ):
         return "CONTROLLED"
     return "DESCRIPTIVE"
@@ -442,14 +442,14 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
             "candidate": {
                 "group": "VERIFY",
                 "label": f"FULL VERIFY {candidate_outcome}",
-                "detail": "verifier task truth",
+                "detail": "verifier 任务真值",
                 "source": "verifier",
                 "kind": "verification",
             },
             "reference": {
                 "group": "VERIFY",
                 "label": f"FULL VERIFY {reference_outcome}",
-                "detail": "verifier task truth",
+                "detail": "verifier 任务真值",
                 "source": "verifier",
                 "kind": "verification",
             },

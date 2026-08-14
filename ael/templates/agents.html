@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
-<section><p class="muted">SETUP / AGENTS</p><h1>真实 Agent 能力</h1><p class="muted">这是当前机器的只读 probe；available 不等于已经完成真实实验。</p></section>
-<table><tr><th>Agent</th><th>Version</th><th>Availability</th><th>Model</th><th>Observation</th><th>Notes</th></tr>
-{% for row in agents %}<tr><td><strong>{{ row.agent.display_name }}</strong><br><code>{{ row.agent.id }}</code></td><td>{{ row.agent.detected_version }}</td><td class="{{ 'pass' if row.capabilities.available else 'unknown' }}">{{ "available" if row.capabilities.available else "unsupported" }}</td><td>{{ "switchable" if row.capabilities.supports_models else "default only" }}</td><td>{{ "OTel capable" if row.capabilities.supports_telemetry else "native/usage" }}</td><td>{{ row.capabilities.notes|join("；") }}</td></tr>{% endfor %}
+<section><p class="muted">配置 / Agent</p><h1>真实 Agent 能力</h1><p class="muted">这是当前机器的只读 probe；“可用”不等于已经完成真实实验。</p></section>
+<table><tr><th>Agent</th><th>版本</th><th>可用性</th><th>模型</th><th>观测</th><th>说明</th></tr>
+{% for row in agents %}<tr><td><strong>{{ row.agent.display_name }}</strong><br><code>{{ row.agent.id }}</code></td><td>{{ row.agent.detected_version }}</td><td class="{{ 'pass' if row.capabilities.available else 'unknown' }}">{{ "可用" if row.capabilities.available else "不支持" }}</td><td>{{ "可切换" if row.capabilities.supports_models else "仅默认配置" }}</td><td>{{ "支持 OTel" if row.capabilities.supports_telemetry else "原生 / 用量" }}</td><td>{{ row.capabilities.notes|join("；") }}</td></tr>{% endfor %}
 </table>
 {% endblock %}

@@ -1,47 +1,47 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="hero">
-  <div><p class="muted">FOLLOW-UP EXPERIMENT</p><h1>把假设变成可运行实验</h1><p class="muted">Source Run {{ run_id }} · 不离开 AEL，不复制 Case fixture</p></div>
-  <a class="button secondary" href="/runs/{{ run_id }}/explorer">Back to Explorer</a>
+  <div><p class="muted">后续实验</p><h1>把假设变成可运行实验</h1><p class="muted">源 Run {{ run_id }} · 不离开 AEL，也不复制 Case fixture</p></div>
+  <a class="button secondary" href="/runs/{{ run_id }}/explorer">返回失败分析器</a>
 </section>
 
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 <section>
-  <p class="muted">Diagnosis suggestion</p>
-  <h2>Verification policy may change completion behavior</h2>
-  <p>Baseline 与 Candidate 必须真的改变一个 independent variable；本页提交后会直接运行两个 Variant × Case × Trial。</p>
+  <p class="muted">诊断建议</p>
+  <h2>验证策略可能改变完成行为</h2>
+  <p>Baseline 与 Candidate 必须真的改变一个 independent variable（独立变量）；本页提交后会直接运行两个 Variant × Case × Trial。</p>
 </section>
 
 <section class="two-col">
   {% for label, variant in [("Baseline", draft.variants[0]), ("Candidate", draft.variants[1])] %}
   <div class="card">
     <p class="muted">{{ label }}</p>
-    <h2>{{ variant.agent_id }} / {{ variant.model }}</h2>
-    <p>run mode: <strong>{{ variant.run_mode.value }}</strong></p>
+    <h2>{{ variant.agent_id }} / {{ "默认配置" if variant.model in ["default", "unknown"] else variant.model }}</h2>
+    <p>运行模式：<strong>{{ variant.run_mode.value }}</strong></p>
     <p>verification_gate: <strong>{{ variant.harness_config.get("verification_gate", false) }}</strong></p>
   </div>
   {% endfor %}
 </section>
 
 <section>
-  <h2>Edit and run</h2>
+  <h2>编辑并运行</h2>
   <form method="post" action="/runs/{{ run_id }}/follow-up">
-    <label>Independent variable
+    <label>independent variable（独立变量）
       <select name="independent_variable">
-        <option value="verification_gate" selected>verification_gate (AEL harness)</option>
-        <option value="run_mode">run mode</option>
+        <option value="verification_gate" selected>verification_gate（AEL Harness）</option>
+        <option value="run_mode">运行模式（run mode）</option>
         <option value="agent">Agent</option>
       </select>
     </label>
-    <label>Candidate Agent (only for Agent ablation)
+    <label>Candidate Agent（仅用于 Agent 消融）
       <select name="candidate_agent_id">
-        <option value="">Use source Agent</option>
+        <option value="">使用源 Agent</option>
         {% for row in agents if row.capabilities.available %}<option value="{{ row.agent.id }}">{{ row.agent.display_name }}</option>{% endfor %}
       </select>
     </label>
-    <label>Trials <input type="number" name="trials" min="1" value="{{ draft.trials }}"></label>
-    <label>Concurrency <input type="number" name="max_concurrency" min="1" value="{{ draft.max_concurrency }}"></label>
-    <button type="submit">Run follow-up experiment</button>
+    <label>试验次数（trials）<input type="number" name="trials" min="1" value="{{ draft.trials }}"></label>
+    <label>并发数（concurrency）<input type="number" name="max_concurrency" min="1" value="{{ draft.max_concurrency }}"></label>
+    <button type="submit">运行后续实验</button>
   </form>
 </section>
 {% endblock %}

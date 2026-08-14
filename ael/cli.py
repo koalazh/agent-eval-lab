@@ -42,7 +42,7 @@ def doctor(root: Path = typer.Option(Path("."), "--root", help="AEL 项目根目
     print(f"OTel Collector：{collector_state}，host={collector['host']}，ports={collector['ports']}")
 
 
-@app.command(help="探测并输出 Agent capability matrix。")
+@app.command(help="探测并输出 Agent 能力矩阵。")
 def agents(root: Path = typer.Option(Path("."), "--root", help="AEL 项目根目录。")) -> None:
     repository = Repository(root)
     rows = probe_registry(repository)

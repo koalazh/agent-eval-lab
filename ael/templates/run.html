@@ -2,32 +2,34 @@
 {% block content %}
 {% set otel = telemetry.get("otel", {}) %}
 {% set native_usage = telemetry.get("native_usage", telemetry) %}
-<section class="hero"><div><p class="muted">RUN EVIDENCE</p><h1>{{ run.case_id }} · {{ run.variant_id }}</h1><p class="muted">trial {{ run.trial }} · {{ run.id }}</p></div><a class="button secondary" href="/runs/{{ run.id }}/explorer">Open Failure Explorer</a></section>
+{% set coverage_labels = {"Outcome": "结果", "Workspace": "工作区", "Tool timeline": "工具时间线", "Token usage": "Token 用量", "Model calls": "Model 调用", "Compaction event": "Compaction 事件", "Subagent lifecycle": "Subagent 生命周期"} %}
+{% set otel_evidence = otel.get("evidence") %}
+<section class="hero"><div><p class="muted">Run 证据</p><h1>{{ run.case_id }} · {{ run.variant_id }}</h1><p class="muted">trial {{ run.trial }} · {{ run.id }}</p></div><a class="button secondary" href="/runs/{{ run.id }}/explorer">打开失败分析器</a></section>
 <section class="grid">
-  <div class="metric"><span class="muted">Result</span><strong class="{{ run.task_outcome }}">{{ run.task_outcome }}</strong></div>
-  <div class="metric"><span class="muted">Process</span><strong>{{ run.run_status }}</strong></div>
-  <div class="metric"><span class="muted">Duration</span><strong>{{ metadata.get("duration_seconds", "unknown") }}s</strong></div>
-  <div class="metric"><span class="muted">Changed files</span><strong>{{ visible_changed_files|length }}</strong></div>
+  <div class="metric"><span class="muted">结果</span><strong class="{{ run.task_outcome }}">{{ run.task_outcome }}</strong></div>
+  <div class="metric"><span class="muted">进程</span><strong>{{ run.run_status }}</strong></div>
+  <div class="metric"><span class="muted">时长</span><strong>{{ metadata.get("duration_seconds", "unknown") }} 秒</strong></div>
+  <div class="metric"><span class="muted">变更文件</span><strong>{{ visible_changed_files|length }}</strong></div>
 </section>
 
 <section>
-  <h2>Telemetry</h2>
-  <p class="muted">Only metrics actually supplied by the Agent/Collector are shown; missing values remain unknown.</p>
+  <h2>Telemetry（遥测）</h2>
+  <p class="muted">这里只显示 Agent/Collector 实际提供的指标；缺失值保持为 unknown。</p>
   <div class="grid">
-    <div class="metric"><span>Model calls</span><strong>{{ otel.get("model_calls", "unknown") }}</strong></div>
-    <div class="metric"><span>Tool calls</span><strong>{{ otel.get("tool_calls", "unknown") }}</strong></div>
-    <div class="metric"><span>Input tokens</span><strong>{{ otel.get("input_tokens", native_usage.get("input_tokens", "unknown")) }}</strong></div>
-    <div class="metric"><span>Output tokens</span><strong>{{ otel.get("output_tokens", native_usage.get("output_tokens", "unknown")) }}</strong></div>
-    <div class="metric"><span>OTel duration</span><strong>{{ otel.get("duration_ms", "unknown") }}ms</strong></div>
-    <div class="metric"><span>OTel evidence</span><strong>{{ otel.get("events", 0) }} events</strong></div>
+    <div class="metric"><span>Model 调用</span><strong>{{ otel.get("model_calls", "unknown") }}</strong></div>
+    <div class="metric"><span>工具调用</span><strong>{{ otel.get("tool_calls", "unknown") }}</strong></div>
+    <div class="metric"><span>输入 tokens</span><strong>{{ otel.get("input_tokens", native_usage.get("input_tokens", "unknown")) }}</strong></div>
+    <div class="metric"><span>输出 tokens</span><strong>{{ otel.get("output_tokens", native_usage.get("output_tokens", "unknown")) }}</strong></div>
+    <div class="metric"><span>OTel 时长</span><strong>{{ otel.get("duration_ms", "unknown") }} ms</strong></div>
+    <div class="metric"><span>OTel 证据</span><strong>{{ otel.get("events", 0) }} 个事件</strong></div>
   </div>
-  {% if otel.get("evidence") %}<p class="pill">{{ otel.evidence }}</p>{% endif %}
+  {% if otel_evidence %}<p class="pill">{{ "已按 ael.run.id 关联真实 OTLP 记录" if otel_evidence == "real OTLP records correlated by ael.run.id" else "证据不足" if otel_evidence == "insufficient evidence" else otel_evidence }}</p>{% endif %}
 </section>
 
-<section><h2>Evidence coverage</h2><div class="grid">{% for name, value in run.evidence_coverage.items() %}<div class="metric"><span>{{ name }}</span><strong>{{ value }}</strong></div>{% endfor %}</div></section>
+<section><h2>证据覆盖</h2><div class="grid">{% for name, value in run.evidence_coverage.items() %}<div class="metric"><span>{{ coverage_labels.get(name, name) }}</span><strong>{{ value }}</strong></div>{% endfor %}</div></section>
 <section class="two-col">
-  <div><h2>Verifier</h2><p class="{{ verifier.get("outcome", "UNKNOWN") }}"><strong>{{ verifier.get("outcome", "UNKNOWN") }}</strong></p><p class="muted">{{ verifier.get("duration_seconds", "unknown") }}s</p><details><summary>Verifier output</summary><pre>{{ verifier.get("stdout", "") }}{{ verifier.get("stderr", "") }}</pre></details></div>
-  <div><h2>Workspace</h2><p>{{ visible_changed_files|join(", ") or "No changed files" }}</p><details><summary>Artifact diff</summary><pre>{{ diff }}</pre></details></div>
+  <div><h2>Verifier（验证器）</h2><p class="{{ verifier.get("outcome", "UNKNOWN") }}"><strong>{{ verifier.get("outcome", "UNKNOWN") }}</strong></p><p class="muted">{{ verifier.get("duration_seconds", "unknown") }} 秒</p><details><summary>Verifier 输出</summary><pre>{{ verifier.get("stdout", "") }}{{ verifier.get("stderr", "") }}</pre></details></div>
+  <div><h2>Workspace（工作区）</h2><p>{{ visible_changed_files|join(", ") or "没有变更文件" }}</p><details><summary>产物 diff</summary><pre>{{ diff }}</pre></details></div>
 </section>
-<section><h2>Observable timeline</h2><p class="muted">Only actionable normalized events are shown here; metrics remain in the summary and raw evidence is expandable.</p><div>{% for event in observable_events %}<p><span class="pill">{{ event.get("source", "native") or "native" }} · {{ event.get("kind", "unknown") or "unknown" }}</span> <strong>{{ event.get("name", "") or "" }}</strong> {{ event.get("summary", "") or "" }}</p>{% else %}<p class="muted">No normalized observable events.</p>{% endfor %}</div><details><summary>Raw OTel correlated evidence</summary><pre>{{ otel_raw }}</pre></details></section>
+<section><h2>可观察行为时间线</h2><p class="muted">这里只显示可执行的归一化事件；指标保留在摘要中，原始证据可展开查看。</p><div>{% for event in observable_events %}<p><span class="pill">{{ event.get("source", "native") or "native" }} · {{ event.get("kind", "unknown") or "unknown" }}</span> <strong>{{ event.get("name", "") or "" }}</strong> {{ event.get("summary", "") or "" }}</p>{% else %}<p class="muted">没有归一化的可观察事件。</p>{% endfor %}</div><details><summary>OTel 关联原始证据</summary><pre>{{ otel_raw }}</pre></details></section>
 {% endblock %}
