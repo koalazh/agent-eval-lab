@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 from .agents import probe_registry
 from .comparison import compare_run_details
+from .diagnosis import create_follow_up_experiment, diagnose_run
 from .persistence import Repository
 from .reports import matrix_report
 
@@ -72,7 +73,21 @@ def create_app(root: str | Path = ".") -> FastAPI:
     async def explorer_page(request: Request, run_id: str):
         if not repository.get_run(run_id):
             return HTMLResponse("Run not found", status_code=404)
-        return render(request, "explorer.html", title=f"Failure Explorer {run_id}", explorer=compare_run_details(repository, run_id))
+        return render(
+            request,
+            "explorer.html",
+            title=f"Failure Explorer {run_id}",
+            explorer=compare_run_details(repository, run_id),
+            diagnosis=diagnose_run(repository, run_id),
+        )
+
+    @app.post("/runs/{run_id}/follow-up")
+    async def follow_up_page(request: Request, run_id: str):
+        try:
+            experiment = create_follow_up_experiment(repository, run_id)
+        except ValueError as exc:
+            return HTMLResponse(str(exc), status_code=400)
+        return RedirectResponse(f"/experiments/{experiment.id}", status_code=303)
 
     @app.get("/failures", response_class=HTMLResponse)
     async def failures_page(request: Request):

@@ -73,6 +73,8 @@ AEL focuses on matrix execution, differential comparison, evidence fusion, failu
 
 The deterministic Failure Explorer first checks Case revision, selects the closest PASS reference, and shows SAME/CHANGED/UNKNOWN variables, confidence (`CONTROLLED`, `PARTIAL`, or `DESCRIPTIVE`), verifier/workspace evidence, normalized anchor timelines, and the first meaningful divergence. If the reference or anchor evidence is insufficient it says so; it does not invent a causal root cause.
 
+Diagnosis consumes that compact packet, not an unbounded trace. Without configuration it returns deterministic hypotheses and unknowns. With `AEL_DIAGNOSIS_BASE_URL`, `AEL_DIAGNOSIS_API_KEY`, and `AEL_DIAGNOSIS_MODEL`, it can call one OpenAI-compatible chat-completions endpoint; the key is used only in the request header. A follow-up action creates a user-confirmed `DRAFT` experiment over the same Case revision and records the proposed independent variable.
+
 ## License
 
 Internal greenfield prototype.

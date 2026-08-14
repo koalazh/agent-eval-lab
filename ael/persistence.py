@@ -379,3 +379,11 @@ class Repository:
         path = self.runs_dir / run_id
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def read_experiment_definition(self, experiment_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT definition_json FROM experiments WHERE id=?",
+                (experiment_id,),
+            ).fetchone()
+        return json.loads(row["definition_json"]) if row else None

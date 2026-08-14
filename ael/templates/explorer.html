@@ -25,5 +25,11 @@
   <h2>Evidence coverage</h2>
   <pre>{{ explorer.evidence_coverage }}</pre>
 </section>
+<section>
+  <h2>Diagnosis</h2>
+  <pre>{{ diagnosis }}</pre>
+  <form method="post" action="/runs/{{ explorer.run_id }}/follow-up">
+    <button type="submit">Create Follow-up Experiment Draft</button>
+  </form>
+</section>
 {% endblock %}
-
