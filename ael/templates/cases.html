@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
-<section><p class="muted">配置 / Case</p><h1>Coding Case</h1><p class="muted">Immutable revision/hash 是 verifier（验证器）任务真值的入口。</p></section>
-<div class="two-col">{% for case in cases %}<article class="card"><h2>{{ case.id }}</h2><span class="pill">revision {{ case.revision[:12] }}</span><p>{{ case.prompt }}</p><small class="muted">{{ case.relative_path }} · 超时 {{ case.timeout_seconds }} 秒</small></article>{% else %}<p class="muted">还没有 Case。</p>{% endfor %}</div>
+<section class="setup-hero"><p class="eyebrow">配置 / Coding Case</p><h1>Coding Case</h1><p class="home-lede">Case revision 是不可变的任务真值（task truth）：同一个 Case 可以有多个 revision，但一次实验应明确选择其中一个。</p><a class="button" href="/experiments/new">选择 Case 创建实验</a></section>
+<section class="case-catalog-section"><div class="section-heading"><div><p class="eyebrow">不可变任务真值</p><h2>Case revision 目录</h2></div><span class="muted">{{ cases|length }} 个可选 revision</span></div>
+  <div class="case-catalog-grid">
+    {% for case in cases %}
+    <article class="case-catalog-card"><div class="case-card-head"><h3>{{ case.id }}</h3><span class="pill">revision {{ case.revision[:12] }}</span></div><p>{{ case.prompt }}</p><div class="case-card-meta"><span>{{ case.relative_path }}</span><span>verifier 超时 {{ case.timeout_seconds }} 秒</span></div><div class="case-card-actions"><a href="/experiments/new">用于新实验</a><code>{{ case.revision[:16] }}</code></div></article>
+    {% else %}<div class="empty-state"><strong>还没有 Case</strong><p>请先准备一个不可变的 Coding Case。</p></div>{% endfor %}
+  </div>
+</section>
 {% endblock %}

@@ -1,35 +1,154 @@
 {% extends "base.html" %}
 {% block content %}
-{% set otel = telemetry.get("otel", {}) %}
-{% set native_usage = telemetry.get("native_usage", telemetry) %}
-{% set coverage_labels = {"Outcome": "结果", "Workspace": "工作区", "Tool timeline": "工具时间线", "Token usage": "Token 用量", "Model calls": "Model 调用", "Compaction event": "Compaction 事件", "Subagent lifecycle": "Subagent 生命周期"} %}
-{% set otel_evidence = otel.get("evidence") %}
-<section class="hero"><div><p class="muted">Run 证据</p><h1>{{ run.case_id }} · {{ run.variant_id }}</h1><p class="muted">trial {{ run.trial }} · {{ run.id }}</p></div><a class="button secondary" href="/runs/{{ run.id }}/explorer">打开失败分析器</a></section>
-<section class="grid">
-  <div class="metric"><span class="muted">结果</span><strong class="{{ run.task_outcome }}">{{ run.task_outcome }}</strong></div>
-  <div class="metric"><span class="muted">进程</span><strong>{{ run.run_status }}</strong></div>
-  <div class="metric"><span class="muted">时长</span><strong>{{ metadata.get("duration_seconds", "unknown") }} 秒</strong></div>
-  <div class="metric"><span class="muted">变更文件</span><strong>{{ visible_changed_files|length }}</strong></div>
-</section>
-
-<section>
-  <h2>Telemetry（遥测）</h2>
-  <p class="muted">这里只显示 Agent/Collector 实际提供的指标；缺失值保持为 unknown。</p>
-  <div class="grid">
-    <div class="metric"><span>Model 调用</span><strong>{{ otel.get("model_calls", "unknown") }}</strong></div>
-    <div class="metric"><span>工具调用</span><strong>{{ otel.get("tool_calls", "unknown") }}</strong></div>
-    <div class="metric"><span>输入 tokens</span><strong>{{ otel.get("input_tokens", native_usage.get("input_tokens", "unknown")) }}</strong></div>
-    <div class="metric"><span>输出 tokens</span><strong>{{ otel.get("output_tokens", native_usage.get("output_tokens", "unknown")) }}</strong></div>
-    <div class="metric"><span>OTel 时长</span><strong>{{ otel.get("duration_ms", "unknown") }} ms</strong></div>
-    <div class="metric"><span>OTel 证据</span><strong>{{ otel.get("events", 0) }} 个事件</strong></div>
+<section class="hero run-hero">
+  <div>
+    <p class="eyebrow">Run 证据</p>
+    <h1>{{ run.case_id }} <span class="muted">·</span> {{ run.variant_id }}</h1>
+    <p class="muted">trial {{ run.trial }} <span class="dot">·</span> <code>{{ run.id }}</code></p>
   </div>
-  {% if otel_evidence %}<p class="pill">{{ "已按 ael.run.id 关联真实 OTLP 记录" if otel_evidence == "real OTLP records correlated by ael.run.id" else "证据不足" if otel_evidence == "insufficient evidence" else otel_evidence }}</p>{% endif %}
+  <a class="button secondary" href="/runs/{{ run.id }}/explorer">打开 Failure Explorer</a>
 </section>
 
-<section><h2>证据覆盖</h2><div class="grid">{% for name, value in run.evidence_coverage.items() %}<div class="metric"><span>{{ coverage_labels.get(name, name) }}</span><strong>{{ value }}</strong></div>{% endfor %}</div></section>
-<section class="two-col">
-  <div><h2>Verifier（验证器）</h2><p class="{{ verifier.get("outcome", "UNKNOWN") }}"><strong>{{ verifier.get("outcome", "UNKNOWN") }}</strong></p><p class="muted">{{ verifier.get("duration_seconds", "unknown") }} 秒</p><details><summary>Verifier 输出</summary><pre>{{ verifier.get("stdout", "") }}{{ verifier.get("stderr", "") }}</pre></details></div>
-  <div><h2>Workspace（工作区）</h2><p>{{ visible_changed_files|join(", ") or "没有变更文件" }}</p><details><summary>产物 diff</summary><pre>{{ diff }}</pre></details></div>
+<section class="run-scoreboard">
+  <div class="score-card score-{{ run.task_outcome|lower }}"><span>任务结果</span><strong>{{ run.task_outcome }}</strong><small>Verifier 决定任务真值</small></div>
+  <div class="score-card"><span>进程状态</span><strong>{{ run_status_label }}</strong><small>Runner 生命周期</small></div>
+  <div class="score-card"><span>运行时长</span><strong>{{ run_duration_label }}</strong><small>端到端 Run 时长</small></div>
+  <div class="score-card"><span>有效变更</span><strong>{{ visible_changed_files|length }}<em> 个文件</em></strong><small>已过滤 cache / pyc</small></div>
 </section>
-<section><h2>可观察行为时间线</h2><p class="muted">这里只显示可执行的归一化事件；指标保留在摘要中，原始证据可展开查看。</p><div>{% for event in observable_events %}<p><span class="pill">{{ event.get("source", "native") or "native" }} · {{ event.get("kind", "unknown") or "unknown" }}</span> <strong>{{ event.get("name", "") or "" }}</strong> {{ event.get("summary", "") or "" }}</p>{% else %}<p class="muted">没有归一化的可观察事件。</p>{% endfor %}</div><details><summary>OTel 关联原始证据</summary><pre>{{ otel_raw }}</pre></details></section>
+
+<section class="trajectory-section">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">行为摘要</p>
+      <h2>AEL trajectory（行为轨迹）</h2>
+    </div>
+    <span class="pill neutral">只基于可观察行为</span>
+  </div>
+  <p class="section-lede">把 native、OTel、Verifier 和 Workspace 证据归纳成 READ / MUTATE / TOOL / VERIFY / COMPLETE 行为组。这里不推断 Agent 的 hidden reasoning。</p>
+  <div class="trajectory-track">
+    {% for step in trajectory_steps %}
+    <div class="trajectory-step trajectory-{{ step.group|lower }} {% if step.status_class == 'failed' %}is-failed{% endif %}">
+      <div class="trajectory-index">{{ "%02d"|format(step.index) }}</div>
+      <div class="trajectory-rail"><span></span></div>
+      <div class="trajectory-body">
+        <div class="trajectory-titleline">
+          <span class="group-badge group-{{ step.group|lower }}">{{ step.group_label }}</span>
+          <strong>{{ step.label }}</strong>
+          <span class="trajectory-status status-{{ step.status_class }}">{{ step.status }}</span>
+        </div>
+        <p>{{ step.detail|replace("task truth", "任务真值") }}</p>
+        <div class="trajectory-meta"><span>{{ step.source }}</span><span>{{ step.event_count }} 个证据事件</span><span>{{ step.duration_label }}</span><span>sequence {{ step.sequence }}</span></div>
+      </div>
+    </div>
+    {% else %}
+    <div class="empty-state"><strong>没有足够的 trajectory 证据</strong><p>当前 Run 没有可归一化的行为组。请展开原始 evidence 检查 Agent 是否提供了可观察事件。</p></div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="telemetry-section">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">可观测性证据</p>
+      <h2>Telemetry 与 OTel signal</h2>
+    </div>
+    <span class="pill {% if telemetry_overview.evidence == 'real OTLP records correlated by ael.run.id' %}pill-success{% else %}pill-warning{% endif %}">
+      {% if telemetry_overview.evidence == "real OTLP records correlated by ael.run.id" %}已按 ael.run.id 关联{% else %}证据不足{% endif %}
+    </span>
+  </div>
+  <p class="section-lede">摘要显示 Agent / Collector 实际提供的 model、tool、token、cost 和耗时；缺失信息保持为未知。OTel 的不同 signal 不混成一个数字。</p>
+  <div class="telemetry-cards">
+    {% for card in telemetry_overview.cards %}
+    <div class="telemetry-card"><span>{{ card.label }}</span><strong>{{ card.value }}</strong><small>{{ card.detail }}</small></div>
+    {% endfor %}
+  </div>
+  <div class="telemetry-lower">
+    <div class="signal-panel">
+      <div class="subsection-title"><strong>OTel signal 分布</strong><span class="muted">{{ trace_view.otel_event_count }} 条关联事件</span></div>
+      <div class="signal-bars">
+        {% for signal in telemetry_overview.signals %}
+        <div class="signal-row">
+          <div><span class="signal-dot signal-{{ signal.key }}"></span><strong>{{ signal.label }}</strong><span class="muted">{{ signal.detail }}</span></div>
+          <strong>{{ signal.value }}</strong>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="telemetry-context">
+      <div class="subsection-title"><strong>上下文</strong></div>
+      <dl class="detail-list">
+        <div><dt>Model</dt><dd>{{ telemetry_overview.models|join(", ") or "未知" }}</dd></div>
+        <div><dt>Collector 记录</dt><dd>{% for key, value in telemetry_overview.record_batches.items() %}{{ key }} {{ value }}{% if not loop.last %} · {% endif %}{% else %}未知{% endfor %}</dd></div>
+        <div><dt>OTel 总耗时</dt><dd>{{ trace_view.total_duration_label }}</dd></div>
+        <div><dt>缓存创建</dt><dd>{{ telemetry_overview.cache_creation }}</dd></div>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section class="evidence-section">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">证据地图</p>
+      <h2>证据来源</h2>
+    </div>
+    <span class="muted">每张卡片说明它能证明什么</span>
+  </div>
+  <div class="evidence-grid">
+    {% for source in evidence_sources %}
+    <article class="evidence-card evidence-{{ source.status }}">
+      <div class="evidence-card-head"><span>{{ source.label }}</span><span class="evidence-state">{% if source.status == 'observed' %}已观测{% else %}未知{% endif %}</span></div>
+      <strong>{{ source.value }}</strong>
+      <p>{{ source.detail }}</p>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="trace-section">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">详细 trace 视图</p>
+      <h2>OTel trace / event 瀑布视图</h2>
+    </div>
+    <div class="trace-total"><span>总时长</span><strong>{{ trace_view.total_duration_label }}</strong></div>
+  </div>
+  <p class="section-lede">{{ trace_view.note }}</p>
+  <div class="trace-legend"><span><i class="signal-dot signal-logs"></i> logs</span><span><i class="signal-dot signal-metrics"></i> metrics</span><span><i class="signal-dot signal-traces"></i> traces / span</span><span><i class="signal-dot signal-native"></i> native</span><span class="muted">点击任一行展开属性</span></div>
+  <div class="trace-time-axis">{% for tick in trace_view.axis_ticks %}<span style="left: {{ tick.left }}%;">{{ tick.label }}</span>{% endfor %}</div>
+  <div class="trace-waterfall">
+    <div class="trace-axis"><span>时间</span><span>事件 / operation</span><span>耗时</span></div>
+    {% for event in trace_view.events %}
+    <details class="trace-row trace-signal-{{ event.signal }}">
+      <summary>
+        <span class="trace-seq">{{ "%02d"|format(event.index) }}</span>
+        <span class="trace-offset">{{ event.offset_label }}</span>
+        <span class="trace-lane"><i style="left: {{ event.bar_left }}%; width: {{ event.bar_width }}%;"></i></span>
+        <span class="trace-operation"><span class="signal-chip signal-chip-{{ event.signal }}">{{ event.signal_label }}</span><span class="kind-chip">{{ event.kind_label }}</span><strong>{{ event.operation }}</strong><small>{{ event.detail }}</small></span>
+        <span class="trace-status status-{{ event.status_class }}">{{ event.status }}</span>
+        <span class="trace-duration">{{ event.duration_label }}</span>
+      </summary>
+      <div class="trace-detail">
+        <div class="trace-detail-summary"><div><span class="muted">可观察说明</span><p>{{ event.detail }}</p></div><div><span class="muted">事件类型 event kind</span><p><code>{{ event.kind }}</code> · {% if event.is_span %}真实 trace span{% else %}event / sample（事件 / 样本）{% endif %}</p></div></div>
+        {% if event.attributes %}
+        <table class="attribute-table"><thead><tr><th>属性</th><th>值</th></tr></thead><tbody>{% for attribute in event.attributes %}<tr><td><code>{{ attribute.key }}</code></td><td>{{ attribute.value }}</td></tr>{% endfor %}</tbody></table>
+        {% else %}<p class="muted">没有可安全展示的结构化属性；原始证据仍可在页面底部展开。</p>{% endif %}
+      </div>
+    </details>
+    {% else %}
+    <div class="empty-state"><strong>没有关联的 OTel / native event</strong><p>当前页面不会把缺失证据渲染成伪造 trace。</p></div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="two-col evidence-detail-section">
+  <div class="card verifier-card"><div class="subsection-title"><strong>Verifier（任务真值）</strong><span class="result-chip result-{{ verifier.get("outcome", "UNKNOWN")|lower }}">{{ verifier.get("outcome", "UNKNOWN") }}</span></div><p class="muted">{{ verifier.get("duration_seconds", "未知") }} 秒 · verifier 决定任务是否完成</p><details><summary>展开 Verifier 输出</summary><pre>{{ verifier.get("stdout", "") }}{{ verifier.get("stderr", "") }}</pre></details></div>
+  <div class="card workspace-card"><div class="subsection-title"><strong>Workspace（环境真值）</strong><span class="muted">{{ visible_changed_files|length }} 个有效变更</span></div><p>{{ visible_changed_files|join(", ") or "没有有效变更文件" }}</p><details><summary>展开产物 diff</summary><pre>{{ diff }}</pre></details></div>
+</section>
+
+<section class="raw-section">
+  <div class="section-heading"><div><p class="eyebrow">原始 evidence</p><h2>原始证据</h2></div><span class="muted">只在需要核对底层记录时展开</span></div>
+  <details><summary>Collector ingest 后的 OTel 原始记录</summary><pre>{{ otel_raw }}</pre></details>
+  <details><summary>Agent native 原始记录</summary><pre>{{ native_raw }}</pre></details>
+</section>
 {% endblock %}

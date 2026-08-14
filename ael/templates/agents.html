@@ -1,7 +1,23 @@
 {% extends "base.html" %}
 {% block content %}
-<section><p class="muted">配置 / Agent</p><h1>真实 Agent 能力</h1><p class="muted">这是当前机器的只读 probe；“可用”不等于已经完成真实实验。</p></section>
-<table><tr><th>Agent</th><th>版本</th><th>可用性</th><th>模型</th><th>观测</th><th>说明</th></tr>
-{% for row in agents %}<tr><td><strong>{{ row.agent.display_name }}</strong><br><code>{{ row.agent.id }}</code></td><td>{{ row.agent.detected_version }}</td><td class="{{ 'pass' if row.capabilities.available else 'unknown' }}">{{ "可用" if row.capabilities.available else "不支持" }}</td><td>{{ "可切换" if row.capabilities.supports_models else "仅默认配置" }}</td><td>{{ "支持 OTel" if row.capabilities.supports_telemetry else "原生 / 用量" }}</td><td>{{ row.capabilities.notes|join("；") }}</td></tr>{% endfor %}
-</table>
+<section class="setup-hero"><p class="eyebrow">配置 / Agent</p><h1>真实 Agent 能力</h1><p class="home-lede">这里回答“当前机器上哪些 Agent 可以被真实运行”，不是一个静态注册表。可用性仍需通过实际 Run 验证。</p><a class="button" href="/experiments/new">用这些 Agent 创建实验</a></section>
+<section class="setup-summary">
+  <div><span>可用 Agent</span><strong>{{ agents|selectattr("capabilities.available")|list|length }}</strong><small>可进入实验构建器</small></div>
+  <div><span>不可用</span><strong>{{ agents|rejectattr("capabilities.available")|list|length }}</strong><small>明确禁用，不伪造组合</small></div>
+  <div><span>支持模型切换</span><strong>{{ agents|selectattr("capabilities.supports_models")|list|length }}</strong><small>以当前 probe 为准</small></div>
+  <div><span>OTel</span><strong>{{ agents|selectattr("capabilities.supports_telemetry")|list|length }}</strong><small>其余使用 native evidence</small></div>
+</section>
+<section class="agent-catalog-section"><div class="section-heading"><div><p class="eyebrow">能力矩阵</p><h2>Agent 能力卡片</h2></div><span class="muted">只读 probe · 不代表 Run 已通过</span></div>
+  <div class="agent-catalog-grid">
+    {% for row in agents %}
+    <article class="agent-catalog-card {% if not row.capabilities.available %}is-disabled{% endif %}">
+      <div class="agent-catalog-head"><div><h3>{{ row.agent.display_name }}</h3><code>{{ row.agent.id }}</code></div><span class="pill {% if row.capabilities.available %}pill-success{% else %}pill-warning{% endif %}">{{ "可用" if row.capabilities.available else "不支持" }}</span></div>
+      <p class="agent-version">{{ row.agent.detected_version }}</p>
+      <div class="capability-pills"><span class="capability-pill">模型：{{ "可切换" if row.capabilities.supports_models else "默认配置" }}</span><span class="capability-pill">观测：{{ "OTel" if row.capabilities.supports_telemetry else "native / usage" }}</span><span class="capability-pill">运行：{{ "controlled" if row.capabilities.supports_controlled else "native" }}</span></div>
+      <p class="agent-catalog-note">{{ row.capabilities.notes|join("；") }}</p>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<section class="setup-detail-section"><details><summary><strong>展开原始能力表</strong><span class="muted">用于核对 CLI probe 结果</span></summary><table><tr><th>Agent</th><th>版本</th><th>可用性</th><th>Model</th><th>观测方式</th><th>说明</th></tr>{% for row in agents %}<tr><td><strong>{{ row.agent.display_name }}</strong></td><td>{{ row.agent.detected_version }}</td><td>{{ "可用" if row.capabilities.available else "不支持" }}</td><td>{{ "可切换" if row.capabilities.supports_models else "仅默认配置" }}</td><td>{{ "支持 OTel" if row.capabilities.supports_telemetry else "原生 / 用量" }}</td><td>{{ row.capabilities.notes|join("；") }}</td></tr>{% endfor %}</table></details></section>
 {% endblock %}

@@ -1,0 +1,717 @@
+from __future__ import annotations
+
+from collections import Counter
+from datetime import datetime
+from typing import Any
+
+
+_SIGNAL_LABELS = {
+    "traces": "OTel trace",
+    "logs": "OTel log",
+    "metrics": "OTel metric",
+    "native": "native trace",
+    "verifier": "Verifier",
+    "workspace": "Workspace",
+}
+
+_KIND_LABELS = {
+    "tool_call": "工具调用",
+    "tool_result": "工具结果",
+    "command": "命令执行",
+    "file_change": "文件变更",
+    "verification": "验证结果",
+    "final": "Agent 完成",
+    "message": "消息事件",
+    "unknown": "未归一化事件",
+}
+
+_SAFE_ATTRIBUTE_KEYS = (
+    "event.sequence",
+    "event.name",
+    "tool_name",
+    "tool_source",
+    "tool_use_id",
+    "model",
+    "query_source",
+    "duration_ms",
+    "success",
+    "decision",
+    "language",
+    "type",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+    "cost_usd",
+    "response_length",
+    "prompt_length",
+    "effort",
+)
+
+_READ_TOOLS = {"read", "glob", "grep", "ls", "find", "search", "cat", "head", "tail"}
+_MUTATE_TOOLS = {"edit", "write", "apply_patch", "applypatch", "notebookedit"}
+
+
+def _data(event: dict[str, Any]) -> dict[str, Any]:
+    value = event.get("data")
+    return value if isinstance(value, dict) else {}
+
+
+def _attributes(event: dict[str, Any]) -> dict[str, Any]:
+    value = _data(event).get("attributes")
+    return value if isinstance(value, dict) else {}
+
+
+def _record(event: dict[str, Any]) -> dict[str, Any]:
+    value = _data(event).get("record")
+    return value if isinstance(value, dict) else {}
+
+
+def _number(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _timestamp_ns(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return int(parsed.timestamp() * 1_000_000_000)
+        except ValueError:
+            return None
+    return None
+
+
+def _timing(event: dict[str, Any]) -> tuple[int | None, int | None]:
+    data = _data(event)
+    record = _record(event)
+    signal = str(data.get("signal") or event.get("source") or "native")
+    start = _timestamp_ns(
+        record.get("startTimeUnixNano")
+        or record.get("timeUnixNano")
+        or event.get("timestamp")
+        or data.get("timestamp")
+    )
+    end = _timestamp_ns(record.get("endTimeUnixNano") or record.get("timeUnixNano") or event.get("timestamp"))
+    duration = _number(_attributes(event).get("duration_ms"))
+    if signal == "metrics":
+        return start, start
+    duration_ns = int(round(duration * 1_000_000)) if duration is not None and duration >= 0 else None
+    if duration is not None and duration >= 0 and start is not None and not record.get("startTimeUnixNano"):
+        end = start
+        start = int(start - (duration_ns or 0))
+    elif duration is not None and duration >= 0 and start is not None and end is None:
+        end = start + (duration_ns or 0)
+    return start, end or start
+
+
+def _format_duration(value: float | int | None) -> str:
+    if value is None:
+        return "未知"
+    value = float(value)
+    if value < 1:
+        return "<1 ms"
+    if value < 1000:
+        return f"{value:.0f} ms"
+    return f"{value / 1000:.2f} s"
+
+
+def _format_offset(value: float | int | None) -> str:
+    if value is None:
+        return "无时间戳"
+    value = float(value)
+    if value < 1000:
+        return f"+{value:.0f} ms"
+    return f"+{value / 1000:.2f} s"
+
+
+def _axis_ticks(total_ms: float) -> list[dict[str, str]]:
+    if total_ms <= 0:
+        return []
+    return [
+        {"left": f"{ratio * 100:.0f}", "label": _format_offset(total_ms * ratio)}
+        for ratio in (0, 0.25, 0.5, 0.75, 1)
+    ]
+
+
+def _format_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.4f}".rstrip("0").rstrip(".")
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _signal(event: dict[str, Any]) -> str:
+    data = _data(event)
+    if data.get("signal") in _SIGNAL_LABELS:
+        return str(data["signal"])
+    if event.get("source") == "otel":
+        return "logs"
+    return str(event.get("source") or "native")
+
+
+def _event_name(event: dict[str, Any]) -> str:
+    attrs = _attributes(event)
+    return str(attrs.get("event.name") or event.get("name") or "")
+
+
+def _tool_name(event: dict[str, Any]) -> str:
+    attrs = _attributes(event)
+    name = str(attrs.get("tool_name") or "").strip()
+    if name:
+        return name
+    event_name = _event_name(event).lower()
+    if "bash" in event_name:
+        return "Bash"
+    return "未命名工具"
+
+
+def _operation(event: dict[str, Any]) -> str:
+    kind = str(event.get("kind") or "unknown")
+    name = _event_name(event)
+    attrs = _attributes(event)
+    if kind in {"tool_call", "tool_result"}:
+        tool = _tool_name(event)
+        return f"调用 {tool}" if kind == "tool_call" else f"{tool} 返回"
+    if kind == "file_change":
+        return "代码变更"
+    if kind == "command":
+        return "执行命令"
+    if kind == "verification":
+        return "验证结果"
+    if name == "api_request":
+        return "Model 调用"
+    if name == "assistant_response":
+        return "Agent 响应"
+    if name == "user_prompt":
+        return "任务提示"
+    if name == "plugin_loaded":
+        return "插件加载"
+    if "token.usage" in name:
+        return "Token 用量"
+    if "cost.usage" in name:
+        return "成本样本"
+    if "lines_of_code" in name or "code_edit" in name:
+        return "代码变更指标"
+    if "session.count" in name:
+        return "会话次数"
+    if "active_time" in name:
+        return "活跃时长"
+    if kind == "final" and _signal(event) == "native":
+        return "Agent 完成"
+    if kind == "final":
+        return "结构化 OTel 事件"
+    return name or str(attrs.get("type") or _KIND_LABELS.get(kind, kind))
+
+
+def _detail(event: dict[str, Any]) -> str:
+    kind = str(event.get("kind") or "unknown")
+    name = _event_name(event)
+    attrs = _attributes(event)
+    if kind in {"tool_call", "tool_result"}:
+        tool = _tool_name(event)
+        if kind == "tool_result":
+            success = attrs.get("success")
+            result = "成功" if str(success).lower() == "true" else "失败" if str(success).lower() == "false" else "已返回"
+            return f"{tool} · {result} · 未采集命令内容"
+        decision = attrs.get("decision")
+        return f"{tool} · {('决策 ' + str(decision)) if decision else '已发起'} · 命令内容未采集"
+    if name == "api_request":
+        model = attrs.get("model") or "未知 model"
+        source = attrs.get("query_source") or "未知 query source"
+        return f"{model} · {source} · 输入 {attrs.get('input_tokens', '未知')} / 输出 {attrs.get('output_tokens', '未知')} tokens"
+    if name == "assistant_response":
+        return f"{attrs.get('model', '未知 model')} · response 已脱敏 · {attrs.get('query_source', '未知 query source')}"
+    if name == "user_prompt":
+        return f"prompt 已脱敏 · 长度 {attrs.get('prompt_length', '未知')} · sequence {attrs.get('event.sequence', '未知')}"
+    if name == "plugin_loaded":
+        return f"plugin scope {attrs.get('plugin.scope', '未知')} · plugin 内容未展开"
+    if "token.usage" in name:
+        return f"{attrs.get('type', '未知')} · {attrs.get('query_source', '未知')} · 当前样本值见属性"
+    if "cost.usage" in name:
+        return f"{attrs.get('query_source', '未知')} · 成本样本值见属性"
+    summary = str(event.get("summary") or "").strip()
+    if summary and summary != name:
+        return summary[:180]
+    return "只显示已关联且已脱敏的可观察字段"
+
+
+def _status(event: dict[str, Any]) -> tuple[str, str]:
+    attrs = _attributes(event)
+    if str(attrs.get("success")).lower() == "false":
+        return "失败", "failed"
+    if str(attrs.get("success")).lower() == "true":
+        return "成功", "success"
+    if attrs.get("decision"):
+        return f"决策 {attrs['decision']}", "success" if str(attrs["decision"]).lower() in {"accept", "allow", "approved"} else "observed"
+    status = _record(event).get("status")
+    if isinstance(status, dict) and str(status.get("code", "")).upper() in {"ERROR", "STATUS_CODE_ERROR"}:
+        return "错误", "failed"
+    kind = str(event.get("kind") or "unknown")
+    return ("已返回" if kind == "tool_result" else "已观测"), "observed"
+
+
+def _safe_attributes(event: dict[str, Any]) -> list[dict[str, str]]:
+    attrs = _attributes(event)
+    result: list[dict[str, str]] = []
+    for key in _SAFE_ATTRIBUTE_KEYS:
+        if key not in attrs or attrs[key] in (None, ""):
+            continue
+        result.append({"key": key, "value": _format_value(attrs[key])})
+    record = _record(event)
+    if record.get("status") and isinstance(record["status"], dict):
+        result.append({"key": "span.status", "value": _format_value(record["status"].get("code", "unknown"))})
+    return result
+
+
+def _source_label(signal: str) -> str:
+    return _SIGNAL_LABELS.get(signal, signal)
+
+
+def _merge_events(otel_events: list[dict[str, Any]], native_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not otel_events:
+        return [
+            event
+            for event in native_events
+            if str(event.get("kind") or "unknown") != "unknown"
+        ]
+    result = list(otel_events)
+    existing = {(event.get("kind"), _event_name(event)) for event in otel_events}
+    for event in native_events:
+        kind = str(event.get("kind") or "unknown")
+        if kind not in {"final", "command", "verification"}:
+            continue
+        key = (kind, _event_name(event))
+        if key not in existing:
+            result.append(event)
+            existing.add(key)
+    return result
+
+
+def _ordered_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    timed = [(event, index, _timing(event)[0]) for index, event in enumerate(events)]
+    timed.sort(key=lambda item: (item[2] is None, item[2] or 0, item[1]))
+    return [event for event, _, _ in timed]
+
+
+def _trajectory_order_key(event: dict[str, Any], index: int) -> tuple[int, float, int]:
+    sequence = _number(_attributes(event).get("event.sequence"))
+    if sequence is not None:
+        return (0, sequence, index)
+    start, _ = _timing(event)
+    if start is not None:
+        return (1, float(start), index)
+    return (2, float(index), index)
+
+
+def build_trace_view(
+    otel_events: list[dict[str, Any]],
+    native_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    merged = _merge_events(otel_events, native_events)
+    timed: list[tuple[dict[str, Any], int, int | None, int | None]] = []
+    for index, event in enumerate(merged):
+        start, end = _timing(event)
+        timed.append((event, index, start, end))
+    known = [item[2] for item in timed if item[2] is not None]
+    origin = min(known) if known else None
+    timed.sort(key=lambda item: (item[2] is None, item[2] or 0, item[1]))
+    latest = max((item[3] or item[2] or 0) for item in timed) if timed else 0
+    total_ms = max(0.0, (latest - origin) / 1_000_000) if origin is not None else 0.0
+    if total_ms <= 0 and timed:
+        total_ms = max(1.0, float(len(timed)))
+    views: list[dict[str, Any]] = []
+    for row_index, (event, _, start, end) in enumerate(timed, start=1):
+        if start is None or origin is None:
+            offset_ms = total_ms
+        else:
+            offset_ms = max(0.0, (start - origin) / 1_000_000)
+        duration_ms = None
+        if start is not None and end is not None and end >= start:
+            duration_ms = (end - start) / 1_000_000
+        attr_duration = _number(_attributes(event).get("duration_ms"))
+        if attr_duration is not None and attr_duration >= 0:
+            duration_ms = attr_duration
+        signal = _signal(event)
+        status, status_class = _status(event)
+        bar_left = min(98.0, max(0.0, offset_ms / total_ms * 100)) if total_ms else 0.0
+        bar_width = min(42.0, max(1.2, (duration_ms or 0) / total_ms * 100)) if total_ms else 2.0
+        views.append(
+            {
+                "index": row_index,
+                "signal": signal,
+                "signal_label": _source_label(signal),
+                "kind": str(event.get("kind") or "unknown"),
+                "kind_label": _KIND_LABELS.get(str(event.get("kind") or "unknown"), str(event.get("kind") or "unknown")),
+                "operation": _operation(event),
+                "detail": _detail(event),
+                "status": status,
+                "status_class": status_class,
+                "offset_label": _format_offset(offset_ms),
+                "duration_label": _format_duration(duration_ms),
+                "bar_left": f"{bar_left:.2f}",
+                "bar_width": f"{bar_width:.2f}",
+                "attributes": _safe_attributes(event),
+                "sequence": _attributes(event).get("event.sequence"),
+                "is_span": signal == "traces",
+            }
+        )
+    signal_counts = Counter(_signal(event) for event in otel_events)
+    trace_count = signal_counts.get("traces", 0)
+    if trace_count:
+        note = f"已收到 {trace_count} 个真实 OTel trace span；按时间和耗时展开，属性可继续查看。"
+    elif otel_events:
+        note = "当前 Run 未收到真实 trace span；以下按 OTel logs / metrics 展示，不把 event 或 metric 冒充 span。"
+    else:
+        note = "当前 Run 没有 OTel 事件；以下仅展示 native evidence 中可归一化的事件。"
+    return {
+        "events": views,
+        "otel_event_count": len(otel_events),
+        "native_event_count": sum(1 for event in native_events if str(event.get("kind") or "unknown") != "unknown"),
+        "signal_counts": dict(signal_counts),
+        "trace_count": trace_count,
+        "has_trace_spans": bool(trace_count),
+        "total_duration_ms": total_ms,
+        "total_duration_label": _format_duration(total_ms) if total_ms else "未知",
+        "axis_ticks": _axis_ticks(total_ms),
+        "note": note,
+    }
+
+
+def _metric_value(event: dict[str, Any]) -> float | None:
+    record = _record(event)
+    for key in ("asInt", "asDouble", "count", "sum"):
+        value = _number(record.get(key))
+        if value is not None:
+            return value
+    summary = str(event.get("summary") or "")
+    if "=" in summary:
+        return _number(summary.rsplit("=", 1)[1])
+    return None
+
+
+def _sum_metric(otel_events: list[dict[str, Any]], name_part: str, attr_key: str, attr_value: str) -> float:
+    total = 0.0
+    for event in otel_events:
+        if name_part not in _event_name(event):
+            continue
+        if str(_attributes(event).get(attr_key)) != attr_value:
+            continue
+        value = _metric_value(event)
+        if value is not None:
+            total += value
+    return total
+
+
+def _number_label(value: Any, fallback: str = "未知") -> str:
+    if value is None:
+        return fallback
+    number = _number(value)
+    if number is None:
+        return str(value)
+    if number.is_integer():
+        return f"{int(number):,}"
+    return f"{number:,.2f}".rstrip("0").rstrip(".")
+
+
+def build_telemetry_overview(
+    telemetry: dict[str, Any],
+    otel_events: list[dict[str, Any]],
+    trace_view: dict[str, Any],
+) -> dict[str, Any]:
+    otel = telemetry.get("otel") if isinstance(telemetry.get("otel"), dict) else telemetry
+    input_tokens = otel.get("input_tokens")
+    output_tokens = otel.get("output_tokens")
+    cache_read = _sum_metric(otel_events, "token.usage", "type", "cacheRead")
+    cache_creation = _sum_metric(otel_events, "token.usage", "type", "cacheCreation")
+    cost = sum(
+        _number(_attributes(event).get("cost_usd")) or 0
+        for event in otel_events
+        if "cost.usage" in _event_name(event) or _attributes(event).get("cost_usd") is not None
+    )
+    models = sorted({str(_attributes(event).get("model")) for event in otel_events if _attributes(event).get("model")})
+    signal_counts = trace_view.get("signal_counts", {})
+    cards = [
+        {"label": "Model 调用", "value": _number_label(otel.get("model_calls")), "detail": "按 api_request 归纳"},
+        {"label": "工具调用", "value": _number_label(otel.get("tool_calls")), "detail": "按 tool_decision 归纳"},
+        {"label": "输入 tokens", "value": _number_label(input_tokens), "detail": "OTel token usage"},
+        {"label": "输出 tokens", "value": _number_label(output_tokens), "detail": "OTel token usage"},
+        {"label": "缓存读取", "value": _number_label(cache_read, "0"), "detail": "cacheRead metric"},
+        {"label": "成本", "value": f"{cost:.4f} USD" if cost else "未知", "detail": "仅在 Agent 提供 cost 时显示"},
+        {"label": "活跃时长", "value": _format_duration(otel.get("duration_ms")), "detail": "OTel duration"},
+        {"label": "关联事件", "value": f"{len(otel_events)} 条", "detail": "按 ael.run.id 关联"},
+    ]
+    signals = [
+        {"key": "logs", "label": "logs", "value": signal_counts.get("logs", 0), "detail": "结构化行为事件"},
+        {"key": "metrics", "label": "metrics", "value": signal_counts.get("metrics", 0), "detail": "token / cost / code edit"},
+        {"key": "traces", "label": "traces", "value": signal_counts.get("traces", 0), "detail": "真实 span"},
+    ]
+    return {
+        "cards": cards,
+        "signals": signals,
+        "models": models,
+        "cache_creation": _number_label(cache_creation, "0"),
+        "evidence": otel.get("evidence") or "insufficient evidence",
+        "record_batches": otel.get("records") or {},
+    }
+
+
+def build_evidence_sources(
+    run: dict[str, Any],
+    verifier: dict[str, Any],
+    changed_files: list[str],
+    telemetry: dict[str, Any],
+    trace_view: dict[str, Any],
+    workspace_observed: bool | None = None,
+) -> list[dict[str, Any]]:
+    signal_counts = trace_view.get("signal_counts", {})
+    verifier_outcome = verifier.get("outcome") or run.get("task_outcome") or "unknown"
+    return [
+        {
+            "label": "Verifier",
+            "value": verifier_outcome,
+            "status": "observed" if verifier_outcome != "unknown" else "unknown",
+            "detail": "任务真值：由 Case verifier 决定 PASS / FAIL。",
+        },
+        {
+            "label": "Workspace",
+            "value": f"{len(changed_files)} 个有效变更",
+            "status": "observed" if (workspace_observed if workspace_observed is not None else bool(changed_files)) else "unknown",
+            "detail": "环境真值：只列出过滤 cache 后的变更文件。",
+        },
+        {
+            "label": "OTel logs",
+            "value": f"{signal_counts.get('logs', 0)} 条",
+            "status": "observed" if signal_counts.get("logs", 0) else "unknown",
+            "detail": "行为证据：tool / model / lifecycle log event。",
+        },
+        {
+            "label": "OTel metrics",
+            "value": f"{signal_counts.get('metrics', 0)} 条",
+            "status": "observed" if signal_counts.get("metrics", 0) else "unknown",
+            "detail": "行为证据：token / cost / code edit metric。",
+        },
+        {
+            "label": "OTel traces",
+            "value": f"{signal_counts.get('traces', 0)} 个 span" if signal_counts.get("traces", 0) else "未收到真实 span",
+            "status": "observed" if signal_counts.get("traces", 0) else "unknown",
+            "detail": "没有真实 span 时保持未知，不从 logs / metrics 推断 trace 层级。",
+        },
+        {
+            "label": "native 证据",
+            "value": f"{trace_view.get('native_event_count', 0)} 条可读事件",
+            "status": "observed" if trace_view.get("native_event_count") else "unknown",
+            "detail": "Agent 原生事件；可能与 OTel tool event 重复，AEL 视图会避免重复堆叠。",
+        },
+    ]
+
+
+def _trajectory_step(event: dict[str, Any], related: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    related = related or [event]
+    kind = str(event.get("kind") or "unknown")
+    attrs = _attributes(event)
+    tool = _tool_name(event)
+    tool_key = tool.lower().replace("-", "_")
+    name = _event_name(event)
+    text = f"{name} {event.get('summary') or ''}".lower()
+    if kind in {"tool_call", "tool_result"}:
+        if tool_key in _READ_TOOLS:
+            group, group_label = "READ", "读取 / 搜索"
+            label = f"读取 · {tool}"
+        elif tool_key in _MUTATE_TOOLS:
+            group, group_label = "MUTATE", "修改"
+            label = f"修改 · {tool}"
+        else:
+            group, group_label = "TOOL", "工具"
+            label = f"工具 · {tool}"
+        success = next((_attributes(item).get("success") for item in related if "success" in _attributes(item)), None)
+        status = "成功" if str(success).lower() == "true" else "失败" if str(success).lower() == "false" else "已观测"
+        detail = f"{tool}：已看到 tool_call / tool_result" if len(related) > 1 else f"{tool}：只看到 {kind}，配对事件不足"
+        duration = next((_number(_attributes(item).get("duration_ms")) for item in related if _attributes(item).get("duration_ms") is not None), None)
+    elif kind == "file_change":
+        group, group_label, label, detail, status, duration = "MUTATE", "修改", "代码变更", "OTel code_edit decision 已观测", "成功", None
+    elif kind == "command":
+        if any(token in text for token in ("pytest", "test", "verify", "check")):
+            group, group_label, label = "VERIFY", "验证", "验证 · 命令"
+        elif any(token in text for token in ("cat ", "sed ", "head ", "tail ", "rg ", "grep ", "find ", "ls ", "pwd")):
+            group, group_label, label = "READ", "读取 / 搜索", "读取 · 命令"
+        else:
+            group, group_label, label = "TOOL", "工具", "工具 · 命令"
+        detail, status, duration = "命令内容已观察但按 observation profile 脱敏", "已观测", None
+    elif kind == "verification":
+        group, group_label, label, detail, status, duration = "VERIFY", "验证", "验证 · 结果", str(event.get("summary") or "verifier result"), "已观测", None
+    elif kind == "final":
+        group, group_label, label, detail, status, duration = "COMPLETE", "完成", "Agent 完成", "Agent native final event", "已观测", None
+    else:
+        return {}
+    source = _source_label(_signal(event))
+    sequences = [str(_attributes(item).get("event.sequence")) for item in related if _attributes(item).get("event.sequence") is not None]
+    return {
+        "group": group,
+        "group_label": group_label,
+        "label": label,
+        "detail": detail,
+        "status": status,
+        "status_class": "success" if status == "成功" else "observed",
+        "source": source,
+        "event_count": len(related),
+        "duration_label": _format_duration(duration) if duration is not None else "—",
+        "sequence": " / ".join(sequences) if sequences else "—",
+    }
+
+
+def build_trajectory(
+    otel_events: list[dict[str, Any]],
+    native_events: list[dict[str, Any]],
+    verifier: dict[str, Any] | None = None,
+    changed_files: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    events = _merge_events(otel_events, native_events)
+    has_mutation_tool = any(
+        str(event.get("kind") or "unknown") in {"tool_call", "tool_result"}
+        and _tool_name(event).lower().replace("-", "_") in _MUTATE_TOOLS
+        for event in events
+    )
+    action_events = [
+        event
+        for event in events
+        if (
+            str(event.get("kind") or "unknown") in {"tool_call", "tool_result", "command", "verification"}
+            or (
+                str(event.get("kind") or "unknown") == "file_change"
+                and not has_mutation_tool
+            )
+            or (
+                str(event.get("kind") or "unknown") == "final"
+                and _signal(event) == "native"
+            )
+        )
+    ]
+    indexed_events = sorted(
+        enumerate(action_events),
+        key=lambda item: _trajectory_order_key(item[1], item[0]),
+    )
+    action_events = [event for _, event in indexed_events]
+    steps: list[dict[str, Any]] = []
+    index = 0
+    while index < len(action_events):
+        event = action_events[index]
+        kind = str(event.get("kind") or "unknown")
+        related = [event]
+        if kind == "tool_call" and index + 1 < len(action_events):
+            next_event = action_events[index + 1]
+            if str(next_event.get("kind") or "unknown") == "tool_result" and _tool_name(next_event) == _tool_name(event):
+                related.append(next_event)
+                index += 1
+        step = _trajectory_step(event, related)
+        if step:
+            if steps and steps[-1]["group"] == step["group"] and steps[-1]["label"] == step["label"] and step["group"] in {"READ", "TOOL"}:
+                steps[-1]["event_count"] += step["event_count"]
+                steps[-1]["detail"] = f"{steps[-1]['detail']}；连续重复事件已合并"
+                if steps[-1]["duration_label"] == "—" and step["duration_label"] != "—":
+                    steps[-1]["duration_label"] = step["duration_label"]
+            else:
+                step["index"] = len(steps) + 1
+                steps.append(step)
+        index += 1
+    if changed_files and not any(step["group"] == "MUTATE" for step in steps):
+        steps.insert(
+            next((i for i, step in enumerate(steps) if step["group"] == "COMPLETE"), len(steps)),
+            {
+                "index": 0,
+                "group": "MUTATE",
+                "group_label": "修改",
+                "label": "Workspace 变更",
+                "detail": ", ".join(changed_files),
+                "status": "已观测",
+                "status_class": "observed",
+                "source": "Workspace",
+                "event_count": len(changed_files),
+                "duration_label": "—",
+                "sequence": "—",
+            },
+        )
+    outcome = (verifier or {}).get("outcome")
+    if outcome in {"PASS", "FAIL"}:
+        steps.append(
+            {
+                "index": len(steps) + 1,
+                "group": "VERIFY",
+                "group_label": "验证",
+                "label": f"Verifier · 全量验证 {outcome}",
+                "detail": "task truth；stdout / stderr 可在下方展开。",
+                "status": outcome,
+                "status_class": "success" if outcome == "PASS" else "failed",
+                "source": "Verifier",
+                "event_count": 1,
+                "duration_label": _format_duration((_number((verifier or {}).get("duration_seconds")) or 0) * 1000),
+                "sequence": "—",
+            }
+        )
+    for index, step in enumerate(steps, start=1):
+        step["index"] = index
+    return steps
+
+
+def align_trajectories(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    left_groups = [item.get("group") for item in left]
+    right_groups = [item.get("group") for item in right]
+    table = [[0] * (len(right_groups) + 1) for _ in range(len(left_groups) + 1)]
+    for i in range(len(left_groups) - 1, -1, -1):
+        for j in range(len(right_groups) - 1, -1, -1):
+            if left_groups[i] == right_groups[j]:
+                table[i][j] = table[i + 1][j + 1] + 1
+            else:
+                table[i][j] = max(table[i + 1][j], table[i][j + 1])
+    pairs: list[tuple[int | None, int | None]] = []
+    i = j = 0
+    while i < len(left) or j < len(right):
+        if i < len(left) and j < len(right) and left_groups[i] == right_groups[j]:
+            pairs.append((i, j))
+            i += 1
+            j += 1
+        elif i < len(left) and (j >= len(right) or table[i + 1][j] >= table[i][j + 1]):
+            pairs.append((i, None))
+            i += 1
+        else:
+            pairs.append((None, j))
+            j += 1
+    rows: list[dict[str, Any]] = []
+    first = True
+    for left_index, right_index in pairs:
+        candidate = left[left_index] if left_index is not None else None
+        reference = right[right_index] if right_index is not None else None
+        if candidate and reference:
+            same = candidate.get("group") == reference.get("group") and candidate.get("label") == reference.get("label")
+            status = "MATCH" if same else "DIVERGENCE"
+        elif candidate:
+            status = "CANDIDATE_ONLY"
+        else:
+            status = "REFERENCE_ONLY"
+        meaningful = status != "MATCH" and (candidate or reference)
+        rows.append(
+            {
+                "candidate": candidate,
+                "reference": reference,
+                "status": status,
+                "status_label": {
+                    "MATCH": "对齐",
+                    "DIVERGENCE": "行为差异",
+                    "CANDIDATE_ONLY": "仅 Candidate",
+                    "REFERENCE_ONLY": "仅 PASS reference",
+                }[status],
+                "first_divergence": bool(meaningful and first),
+            }
+        )
+        if meaningful:
+            first = False
+    return rows

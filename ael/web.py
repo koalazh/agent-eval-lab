@@ -24,6 +24,13 @@ from .models import Agent, AgentVariant, Capabilities, ObservationProfile, RunMo
 from .persistence import Repository
 from .reports import matrix_report
 from .runner import Runner
+from .trace_view import (
+    align_trajectories,
+    build_evidence_sources,
+    build_telemetry_overview,
+    build_trace_view,
+    build_trajectory,
+)
 
 
 def create_app(root: str | Path = ".") -> FastAPI:
@@ -93,6 +100,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             "experiments.html",
             title="实验室",
             experiments=experiments,
+            experiment_cards=_experiment_cards(repository, experiments),
             running=[item for item in experiments if item["status"] in {"PENDING", "RUNNING"}],
             recent=experiments[:8],
         )
@@ -113,6 +121,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             "experiments.html",
             title="实验室",
             experiments=experiments,
+            experiment_cards=_experiment_cards(repository, experiments),
             running=[item for item in experiments if item["status"] in {"PENDING", "RUNNING"}],
             recent=experiments[:8],
         )
@@ -120,12 +129,14 @@ def create_app(root: str | Path = ".") -> FastAPI:
     @app.get("/experiments/new", response_class=HTMLResponse)
     async def new_experiment_page(request: Request):
         rows = agent_rows()
+        cases = case_options()
         return render(
             request,
             "new_experiment.html",
             title="新建实验",
             agents=rows,
-            cases=case_options(),
+            cases=cases,
+            case_groups=_case_groups(cases),
             selected_cases=[],
             selected_agents=[row["agent"]["id"] for row in rows if row["capabilities"]["available"]],
             error=None,
@@ -150,6 +161,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
                 title="新建实验",
                 agents=rows,
                 cases=case_options(),
+                case_groups=_case_groups(case_options()),
                 selected_cases=form.get("case_path", []),
                 selected_agents=form.get("agent_id", []),
                 error=str(exc),
@@ -187,9 +199,11 @@ def create_app(root: str | Path = ".") -> FastAPI:
             title=f"实验 {experiment_id}",
             experiment=experiment,
             experiment_id=experiment_id,
+            experiment_status_label=_status_label(experiment.get("status")),
             definition=definition,
             runs=runs,
             matrix=matrix,
+            differential_rows=[row for row in matrix["matrix_rows"] if row["differential"]],
         )
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
@@ -199,23 +213,44 @@ def create_app(root: str | Path = ".") -> FastAPI:
             return HTMLResponse("未找到运行记录", status_code=404)
         evidence = Path(run["run_dir"])
         changes = _read_json(evidence / "workspace" / "changes.json")
+        verifier = _read_json(evidence / "verifier" / "result.json")
+        telemetry = _read_json(evidence / "telemetry" / "summary.json")
+        metadata = _read_json(evidence / "metadata.json")
+        native_events = _read_jsonl(evidence / "native" / "events.jsonl", limit=None)
+        otel_events = _read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=None)
+        trace_view = build_trace_view(otel_events, native_events)
         return render(
             request,
             "run.html",
             title=f"运行 {run_id}",
             run=run,
-            metadata=_read_json(evidence / "metadata.json"),
+            run_status_label=_status_label(run.get("run_status")),
+            metadata=metadata,
+            run_duration_label=_duration_label(metadata.get("duration_seconds")),
             changes=changes,
             diff=_read_text(evidence / "workspace" / "diff.patch"),
-            verifier=_read_json(evidence / "verifier" / "result.json"),
-            telemetry=_read_json(evidence / "telemetry" / "summary.json"),
-            native_events=_read_jsonl(evidence / "native" / "events.jsonl", limit=40),
-            otel_events=_read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=40),
-            observable_events=_observable_events(
-                _read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=40),
-                _read_jsonl(evidence / "native" / "events.jsonl", limit=40),
+            verifier=verifier,
+            telemetry=telemetry,
+            native_events=native_events,
+            otel_events=otel_events,
+            trace_view=trace_view,
+            telemetry_overview=build_telemetry_overview(telemetry, otel_events, trace_view),
+            evidence_sources=build_evidence_sources(
+                run,
+                verifier,
+                _visible_changed_files(changes),
+                telemetry,
+                trace_view,
+                workspace_observed=(evidence / "workspace" / "changes.json").exists(),
+            ),
+            trajectory_steps=build_trajectory(
+                otel_events,
+                native_events,
+                verifier=verifier,
+                changed_files=_visible_changed_files(changes),
             ),
             otel_raw=_read_text(evidence / "telemetry" / "otel" / "raw.jsonl", limit=30000),
+            native_raw=_read_text(evidence / "native" / "raw.jsonl", limit=30000),
             visible_changed_files=_visible_changed_files(changes),
         )
 
@@ -225,6 +260,15 @@ def create_app(root: str | Path = ".") -> FastAPI:
             return HTMLResponse("未找到运行记录", status_code=404)
         explorer = compare_run_details(repository, run_id)
         reference_id = (explorer.get("matched_reference") or {}).get("run_id")
+        candidate_run = repository.get_run(run_id)
+        reference_run = repository.get_run(reference_id) if reference_id else None
+        for summary in (explorer.get("candidate_summary"), explorer.get("reference_summary")):
+            if summary:
+                summary["duration_label"] = _duration_label(summary.get("duration_seconds"))
+        candidate_trace = _trace_for_run(candidate_run)
+        reference_trace = _trace_for_run(reference_run)
+        candidate_trajectory = _trajectory_for_run(candidate_run)
+        reference_trajectory = _trajectory_for_run(reference_run)
         return render(
             request,
             "explorer.html",
@@ -232,8 +276,15 @@ def create_app(root: str | Path = ".") -> FastAPI:
             explorer=explorer,
             diagnosis=diagnose_run(repository, run_id),
             timeline_rows=_timeline_rows(explorer),
-            candidate_raw=_raw_events(repository.get_run(run_id)),
-            reference_raw=_raw_events(repository.get_run(reference_id)) if reference_id else "",
+            candidate_trace=candidate_trace,
+            reference_trace=reference_trace,
+            trajectory_rows=align_trajectories(candidate_trajectory, reference_trajectory),
+            candidate_evidence_sources=_evidence_for_run(candidate_run),
+            reference_evidence_sources=_evidence_for_run(reference_run),
+            candidate_raw=_raw_events(candidate_run),
+            reference_raw=_raw_events(reference_run),
+            candidate_otel_raw=_raw_otel_events(candidate_run),
+            reference_otel_raw=_raw_otel_events(reference_run),
         )
 
     @app.get("/runs/{run_id}/follow-up/new", response_class=HTMLResponse)
@@ -301,11 +352,21 @@ def create_app(root: str | Path = ".") -> FastAPI:
 
     @app.get("/failures", response_class=HTMLResponse)
     async def failures_page(request: Request):
-        return render(request, "failures.html", title="失败模式", failures=repository.list_failures())
+        failures = _failure_rollups(repository.list_failures())
+        return render(request, "failures.html", title="失败模式", failures=failures, failure_summary=_failure_summary(failures))
 
     @app.get("/failures/{failure_id}", response_class=HTMLResponse)
     async def failure_page(request: Request, failure_id: str):
-        failure = repository.get_failure(failure_id)
+        failure = next(
+            (
+                item
+                for item in _failure_rollups(repository.list_failures())
+                if failure_id in item.get("rollup_failure_ids", [])
+            ),
+            None,
+        )
+        if failure is None:
+            failure = repository.get_failure(failure_id)
         if not failure:
             return HTMLResponse("未找到失败记录", status_code=404)
         source_run = repository.get_run(failure["source_run_id"])
@@ -347,11 +408,16 @@ def _build_experiment(
     if unregistered:
         raise ValueError(f"Case 必须来自当前工作区已注册的 Case：{unregistered[0]}")
     cases = []
+    selected_case_ids: set[str] = set()
     for path in case_paths:
         try:
-            cases.append(load_case(path))
+            case = load_case(path)
         except (OSError, ValueError) as exc:
             raise ValueError(f"Case 不可用：{path}（{exc}）") from exc
+        if case.id in selected_case_ids:
+            raise ValueError(f"同一个 Case 只能选择一个 revision：{case.id}")
+        selected_case_ids.add(case.id)
+        cases.append(case)
 
     selected_agents = form.get("agent_id", [])
     if not selected_agents:
@@ -464,6 +530,128 @@ def _variant_label(variant: dict[str, Any]) -> str:
     return label
 
 
+def _experiment_cards(repository: Repository, experiments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    for experiment in experiments:
+        runs = repository.list_runs(experiment["id"])
+        matrix = matrix_report(runs)
+        differential = [row["case_id"] for row in matrix["matrix_rows"] if row["differential"]]
+        cards.append(
+            {
+                **experiment,
+                "created_at_label": str(experiment.get("created_at") or "").replace("T", " ")[:16],
+                "status_label": _status_label(experiment.get("status")),
+                "run_count": len(runs),
+                "pass_rate": matrix["summary"]["pass_rate"],
+                "differential_cases": differential,
+                "completed_runs": sum(run.get("run_status") == "COMPLETED" for run in runs),
+            }
+        )
+    return cards
+
+
+def _case_groups(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for case in cases:
+        group = groups.setdefault(
+            case["id"],
+            {"id": case["id"], "prompt": case["prompt"], "revisions": []},
+        )
+        group["revisions"].append(case)
+    return sorted(groups.values(), key=lambda item: item["id"])
+
+
+def _failure_summary(failures: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"total": len(failures), "observed": 0, "reproduced": 0, "fixed": 0, "guarded": 0}
+    for failure in failures:
+        status = str(failure.get("status") or "").upper()
+        if status == "OBSERVED":
+            counts["observed"] += 1
+        elif status == "REPRODUCED":
+            counts["reproduced"] += 1
+        elif status == "FIXED":
+            counts["fixed"] += 1
+        elif status == "REGRESSION_GUARDED":
+            counts["guarded"] += 1
+    return counts
+
+
+_FAILURE_STATUS_RANK = {
+    "OBSERVED": 1,
+    "REPRODUCED": 2,
+    "FIXED": 3,
+    "REGRESSION_GUARDED": 4,
+}
+
+
+def _failure_rollups(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Present old per-run rows as case-revision patterns without mutating evidence."""
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for failure in failures:
+        details = failure.get("details") or {}
+        key = (
+            str(details.get("case_id") or "unknown"),
+            str(details.get("case_revision") or "unknown"),
+            str(details.get("verifier_signature_text") or "unknown"),
+        )
+        groups.setdefault(key, []).append(failure)
+
+    rollups: list[dict[str, Any]] = []
+    for (case_id, case_revision, verifier_signature), items in groups.items():
+        representative = max(
+            items,
+            key=lambda item: (
+                _FAILURE_STATUS_RANK.get(str(item.get("status") or "").upper(), 0),
+                str(item.get("updated_at") or item.get("created_at") or ""),
+            ),
+        )
+        aggregate = dict(representative)
+        details = dict(representative.get("details") or {})
+        run_ids: list[str] = []
+        variant_ids: list[str] = []
+        experiment_ids: list[str] = []
+        for item in items:
+            item_details = item.get("details") or {}
+            for run_id in item.get("run_ids") or item_details.get("run_ids") or [item.get("source_run_id")]:
+                if run_id and run_id not in run_ids:
+                    run_ids.append(run_id)
+            for variant_id in item_details.get("variant_ids") or [item_details.get("variant_id")]:
+                if variant_id and variant_id not in variant_ids:
+                    variant_ids.append(variant_id)
+            for experiment_id in item_details.get("experiment_ids") or [item_details.get("experiment_id")]:
+                if experiment_id and experiment_id not in experiment_ids:
+                    experiment_ids.append(experiment_id)
+        status = max(
+            (str(item.get("status") or "OBSERVED").upper() for item in items),
+            key=lambda value: _FAILURE_STATUS_RANK.get(value, 0),
+        )
+        if status == "OBSERVED" and len(run_ids) >= 2:
+            status = "REPRODUCED"
+        details.update(
+            {
+                "case_id": case_id,
+                "case_revision": case_revision,
+                "verifier_signature_text": "" if verifier_signature == "unknown" else verifier_signature,
+                "run_ids": run_ids,
+                "run_count": len(run_ids),
+                "variant_ids": sorted(variant_ids),
+                "experiment_ids": sorted(experiment_ids),
+                "rollup_count": len(items),
+                "rollup_scope": "同一 Case revision / verifier signature",
+            }
+        )
+        aggregate["status"] = status
+        aggregate["run_ids"] = run_ids
+        aggregate["details"] = details
+        aggregate["rollup_failure_ids"] = [str(item.get("id")) for item in items if item.get("id")]
+        rollups.append(aggregate)
+    return sorted(
+        rollups,
+        key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+        reverse=True,
+    )
+
+
 def _is_within(root: Path, candidate: Path) -> bool:
     try:
         candidate.relative_to(root.resolve())
@@ -489,6 +677,78 @@ def _raw_events(run: dict[str, Any] | None) -> str:
         return ""
     path = Path(run["run_dir"]) / "native" / "raw.jsonl"
     return _read_text(path, limit=30000)
+
+
+def _raw_otel_events(run: dict[str, Any] | None) -> str:
+    if not run:
+        return ""
+    path = Path(run["run_dir"]) / "telemetry" / "otel" / "raw.jsonl"
+    return _read_text(path, limit=30000)
+
+
+def _trace_for_run(run: dict[str, Any] | None) -> dict[str, Any]:
+    if not run:
+        return build_trace_view([], [])
+    evidence = Path(run["run_dir"])
+    return build_trace_view(
+        _read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=None),
+        _read_jsonl(evidence / "native" / "events.jsonl", limit=None),
+    )
+
+
+def _evidence_for_run(run: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not run:
+        return []
+    evidence = Path(run["run_dir"])
+    changes = _read_json(evidence / "workspace" / "changes.json")
+    verifier = _read_json(evidence / "verifier" / "result.json")
+    telemetry = _read_json(evidence / "telemetry" / "summary.json")
+    otel_events = _read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=None)
+    native_events = _read_jsonl(evidence / "native" / "events.jsonl", limit=None)
+    trace_view = build_trace_view(otel_events, native_events)
+    return build_evidence_sources(
+        run,
+        verifier,
+        _visible_changed_files(changes),
+        telemetry,
+        trace_view,
+        workspace_observed=(evidence / "workspace" / "changes.json").exists(),
+    )
+
+
+def _duration_label(value: Any) -> str:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return "unknown"
+    return f"{seconds:.2f} 秒"
+
+
+_RUN_STATUS_LABELS = {
+    "PENDING": "等待运行",
+    "RUNNING": "运行中",
+    "COMPLETED": "已完成",
+    "ERROR": "运行错误",
+}
+
+
+def _status_label(value: Any) -> str:
+    normalized = str(value or "UNKNOWN").upper()
+    return _RUN_STATUS_LABELS.get(normalized, normalized)
+
+
+def _trajectory_for_run(run: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not run:
+        return []
+    evidence = Path(run["run_dir"])
+    verifier = _read_json(evidence / "verifier" / "result.json")
+    changes = _read_json(evidence / "workspace" / "changes.json")
+    return build_trajectory(
+        _read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=None),
+        _read_jsonl(evidence / "native" / "events.jsonl", limit=None),
+        verifier=verifier,
+        changed_files=_visible_changed_files(changes),
+    )
 
 
 def _visible_changed_files(changes: dict[str, Any]) -> list[str]:
@@ -535,11 +795,14 @@ def _read_text(path: Path, limit: int = 20000) -> str:
     return path.read_text(encoding="utf-8", errors="replace")[:limit]
 
 
-def _read_jsonl(path: Path, limit: int = 40) -> list[dict[str, Any]]:
+def _read_jsonl(path: Path, limit: int | None = 40) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     result = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[:limit]:
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if limit is not None:
+        lines = lines[:limit]
+    for line in lines:
         try:
             value = json.loads(line)
         except json.JSONDecodeError:

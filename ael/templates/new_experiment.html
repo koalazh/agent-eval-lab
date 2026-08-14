@@ -1,75 +1,88 @@
 {% extends "base.html" %}
 {% block content %}
-<section>
-  <p class="muted">实验室 / 新建实验</p>
-  <h1>创建一次实验</h1>
-  <p class="muted">不需要手写 Experiment YAML。AEL 会自动展开合法的 Variant × Case × Trial。</p>
-</section>
+<section class="builder-hero"><p class="eyebrow">实验室 / 新建实验</p><h1>创建一次真实实验</h1><p class="home-lede">不需要手写 Experiment YAML。选择 Case revision、真实 Agent 和运行策略，AEL 会自动展开合法的 Variant × Case × Trial。</p><div class="builder-steps"><span class="active"><b>1</b>选择 Case</span><i>→</i><span><b>2</b>配置 Variant</span><i>→</i><span><b>3</b>运行并比较</span></div></section>
 {% if error %}<section class="error"><strong>无法创建：</strong> {{ error }}</section>{% endif %}
-<form method="post" action="/experiments/new">
-  <section>
-    <h2>1. Suite / Case</h2>
-    <div class="two-col">
-      {% for case in cases %}
-      <label class="choice">
-        <input type="checkbox" name="case_path" value="{{ case.path }}" {% if case.path in selected_cases %}checked{% endif %}>
-        <strong>{{ case.id }}</strong> <span class="pill">rev {{ case.revision[:10] }}</span>
-        <br><span class="muted">{{ case.prompt }}</span>
-        <br><small>{{ case.relative_path }} · verifier 超时 {{ case.timeout_seconds }} 秒</small>
-      </label>
-      {% else %}<p class="muted">没有发现 Case 定义。</p>{% endfor %}
-    </div>
-    <div class="choice">
-      <div class="choice-title"><input type="checkbox" name="agent_id" value="custom-harness" {% if "custom-harness" in selected_agents %}checked{% endif %}><strong>Custom Harness</strong><span class="pill">在此配置</span></div>
-      <p class="muted">输入当前机器上真实可执行的本地命令；没有命令或不可执行时，提交会被拒绝为“不支持”。</p>
-      <label>命令<input type="text" name="custom_command" value="" placeholder="例如：my-agent --json"></label>
+<form method="post" action="/experiments/new" id="experiment-builder">
+  <section class="builder-section">
+    <div class="section-heading"><div><p class="eyebrow">步骤 1</p><h2>选择 Coding Case</h2></div><span class="selection-count" id="case-count">已选 0 个 Case</span></div>
+    <p class="section-lede">同一个 Case 可能存在多个不可变 revision。一次实验中每个 Case 只能选择一个 revision；如果要比较 revision，请创建另一项实验。</p>
+    <div class="case-group-grid">
+      {% for group in case_groups %}
+      <fieldset class="case-group">
+        <legend><strong>{{ group.id }}</strong><span class="pill">{{ group.revisions|length }} 个 revision</span></legend>
+        <p class="case-group-prompt">{{ group.prompt }}</p>
+        <div class="case-revision-list">
+          {% for case in group.revisions %}
+          <label class="case-revision">
+            <input type="checkbox" name="case_path" value="{{ case.path }}" data-case-id="{{ group.id }}" {% if case.path in selected_cases %}checked{% endif %}>
+            <span><strong>revision {{ case.revision[:12] }}</strong><small>{{ case.relative_path }} <span class="dot">·</span> verifier 超时 {{ case.timeout_seconds }} 秒</small></span>
+          </label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      {% else %}<div class="empty-state"><strong>没有发现 Case 定义</strong><p>请先在当前项目中准备一个不可变的 Coding Case。</p></div>{% endfor %}
     </div>
   </section>
-  <section>
-    <h2>2. Agent / 模型</h2>
-    <p class="muted">不可用 Agent 会明确标记为“已禁用”；“默认配置”表示使用当前 CLI/provider 配置，精确 model 以真实 Run 证据为准。</p>
-    <div class="two-col">
+
+  <section class="builder-section">
+    <div class="section-heading"><div><p class="eyebrow">步骤 2</p><h2>选择 Agent / Model Variant</h2></div><span class="selection-count" id="agent-count">已选 0 个 Variant</span></div>
+    <p class="section-lede">不可用组合会被禁用；“默认配置”只表示使用当前 CLI / provider 配置，精确 model 以真实 Run evidence 为准。</p>
+    <div class="agent-builder-grid">
       {% for row in agents %}
-      {% set agent = row.agent %}
-      {% set available = row.capabilities.available %}
-      <div class="choice {% if not available %}disabled{% endif %}">
-        <div class="choice-title">
-          <input type="checkbox" name="agent_id" value="{{ agent.id }}" {% if agent.id in selected_agents %}checked{% endif %} {% if not available %}disabled{% endif %}>
-          <strong>{{ agent.display_name }}</strong>
-          <span class="pill">{{ "可用" if available else "不支持" }}</span>
-        </div>
-        <small class="muted">{{ agent.detected_version }} · {{ row.capabilities.notes|join("；") }}</small>
+      {% set agent = row.agent %}{% set capabilities = row.capabilities %}{% set available = capabilities.available %}
+      <article class="agent-builder-card {% if not available %}is-disabled{% endif %}">
+        <div class="agent-builder-head"><label class="choice-title"><input type="checkbox" name="agent_id" value="{{ agent.id }}" data-agent-choice {% if agent.id in selected_agents %}checked{% endif %} {% if not available %}disabled{% endif %}><strong>{{ agent.display_name }}</strong></label><span class="pill {% if available %}pill-success{% else %}pill-warning{% endif %}">{{ "可用" if available else "不支持" }}</span></div>
+        <p class="muted agent-version">{{ agent.detected_version }}</p>
+        <p class="agent-capability-note">{{ capabilities.notes|join("；") }}</p>
         {% if available %}
-        <label>模型 / alias
-          <input type="text" name="model_{{ agent.id }}" value="default" aria-label="模型 {{ agent.id }}">
-        </label>
-        <label>Provider（提供方）
-          <input type="text" name="provider_{{ agent.id }}" value="default" aria-label="Provider {{ agent.id }}">
-        </label>
-        <div class="two-col">
-          <label>运行模式<select name="run_mode_{{ agent.id }}"><option value="native">native（原生）</option><option value="controlled">controlled（受控）</option></select></label>
-          <label>观测配置<select name="observation_profile_{{ agent.id }}"><option value="minimal">minimal（最小）</option><option value="telemetry">telemetry（遥测）</option><option value="deep">deep（深度）</option></select></label>
+        <div class="agent-config-fields">
+          <label>Model / 别名<input type="text" name="model_{{ agent.id }}" value="{{ form.get('model_' ~ agent.id, ['default'])[-1] }}" aria-label="模型 {{ agent.id }}"></label>
+          <label>Provider（提供方）<input type="text" name="provider_{{ agent.id }}" value="{{ form.get('provider_' ~ agent.id, ['default'])[-1] }}" aria-label="Provider {{ agent.id }}"></label>
+          <div class="two-col"><label>运行模式<select name="run_mode_{{ agent.id }}"><option value="native">native（原生）</option><option value="controlled">controlled（受控）</option></select></label><label>观测配置<select name="observation_profile_{{ agent.id }}"><option value="minimal">minimal（最小）</option><option value="telemetry">telemetry（遥测）</option><option value="deep">deep（深度）</option></select></label></div>
+          <label>Agent 专属配置（JSON，可选）<textarea name="config_{{ agent.id }}" placeholder='{"permission_mode":"..."}'>{{ form.get('config_' ~ agent.id, [''])[-1] }}</textarea></label>
         </div>
-        <label>Agent 专属配置（JSON，可选）
-          <textarea name="config_{{ agent.id }}" placeholder='{"permission_mode":"..."}'></textarea>
-        </label>
-        {% else %}<p class="muted">{{ row.capabilities.notes|join("；") }}</p>{% endif %}
-      </div>
+        {% else %}<div class="unsupported-note">当前页面不会把不可用 Agent 放进合法 Variant。</div>{% endif %}
+      </article>
       {% endfor %}
     </div>
+    <article class="custom-harness-card"><div class="agent-builder-head"><label class="choice-title"><input type="checkbox" name="agent_id" value="custom-harness" data-agent-choice {% if "custom-harness" in selected_agents %}checked{% endif %}><strong>Custom Harness</strong></label><span class="pill">在此配置</span></div><p class="muted">输入当前机器上真实可执行的本地命令。AEL 只记录 native output 和真实可见 usage，不推断内部 reasoning。</p><label>命令<input type="text" name="custom_command" value="{{ form.get('custom_command', [''])[-1] }}" placeholder="例如：my-agent --json"></label></article>
   </section>
-  <section>
-    <h2>3. 运行策略</h2>
-    <div class="two-col">
-      <label>实验名称<input type="text" name="experiment_name" value="golden-coding"></label>
-      <label>Suite ID<input type="text" name="suite_id" value="golden-coding"></label>
-      <label>试验次数（trials）<input type="number" min="1" max="20" name="trials" value="1"></label>
-      <label>并发数（concurrency）<input type="number" min="1" max="16" name="max_concurrency" value="1"></label>
+
+  <section class="builder-section">
+    <div class="section-heading"><div><p class="eyebrow">步骤 3</p><h2>运行策略</h2></div><span class="selection-count" id="run-preview">Variant × Case × Trial</span></div>
+    <div class="builder-strategy-grid">
+      <label>实验名称<input type="text" name="experiment_name" value="{{ form.get('experiment_name', ['golden-coding'])[-1] }}"></label>
+      <label>Suite ID<input type="text" name="suite_id" value="{{ form.get('suite_id', ['golden-coding'])[-1] }}"></label>
+      <label>试验次数（trials）<input type="number" min="1" max="20" name="trials" id="trials" value="{{ form.get('trials', ['1'])[-1] }}"></label>
+      <label>并发数（concurrency）<input type="number" min="1" max="16" name="max_concurrency" value="{{ form.get('max_concurrency', ['1'])[-1] }}"></label>
     </div>
+    <div class="run-preview-card"><div><strong>运行预览</strong><p id="preview-text">选择 Case 和 Variant 后，AEL 会在此显示预计 Run 数。</p></div><div class="preview-equation"><strong id="preview-runs">0</strong><span>预计 Runs</span></div></div>
   </section>
-  <section>
-    <p><strong>运行预览：</strong>已选 Variant × Case × trials；每个 Run 都会保存 verifier、workspace、native、usage 和 telemetry 覆盖情况。</p>
-    <button type="submit">运行实验</button>
-  </section>
+  <section class="builder-submit"><div><strong>准备好了？</strong><p>点击运行后，页面会进入实时实验矩阵；无需离开 AEL 修改 YAML。</p></div><button type="submit">运行实验</button></section>
 </form>
+<script>
+(() => {
+  const caseInputs = [...document.querySelectorAll('input[data-case-id]')];
+  const agentInputs = [...document.querySelectorAll('input[data-agent-choice]')];
+  const caseCount = document.querySelector('#case-count');
+  const agentCount = document.querySelector('#agent-count');
+  const previewRuns = document.querySelector('#preview-runs');
+  const previewText = document.querySelector('#preview-text');
+  const trials = document.querySelector('#trials');
+  const update = () => {
+    const selectedCases = caseInputs.filter((input) => input.checked).length;
+    const selectedAgents = agentInputs.filter((input) => input.checked).length;
+    const trialCount = Number(trials?.value || 1);
+    caseCount.textContent = `已选 ${selectedCases} 个 Case`;
+    agentCount.textContent = `已选 ${selectedAgents} 个 Variant`;
+    const total = selectedCases * selectedAgents * trialCount;
+    previewRuns.textContent = total;
+    previewText.textContent = total ? `${selectedCases} 个 Case × ${selectedAgents} 个 Variant × ${trialCount} 次试验 = ${total} 个 Run；每个 Run 都会保存 verifier、workspace、native 和 telemetry evidence。` : '请选择至少一个 Case 和一个可用 Variant。';
+  };
+  caseInputs.forEach((input) => input.addEventListener('change', () => { if (input.checked) caseInputs.filter((other) => other !== input && other.dataset.caseId === input.dataset.caseId).forEach((other) => { other.checked = false; }); update(); }));
+  agentInputs.forEach((input) => input.addEventListener('change', update));
+  trials?.addEventListener('input', update);
+  update();
+})();
+</script>
 {% endblock %}

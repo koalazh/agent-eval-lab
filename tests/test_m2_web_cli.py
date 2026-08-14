@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from ael.persistence import Repository
-from ael.web import _build_experiment, create_app
+from ael.web import _build_experiment, _failure_rollups, create_app
 
 
 def test_server_rendered_navigation_on_empty_repository(tmp_path):
@@ -65,3 +65,40 @@ verify:
         assert "当前工作区已注册" in str(exc)
     else:
         raise AssertionError("builder accepted a case outside the repository")
+
+
+def test_failure_page_rolls_up_legacy_per_run_rows():
+    rows = [
+        {
+            "id": "failure-a",
+            "source_run_id": "run-a",
+            "status": "OBSERVED",
+            "created_at": "2026-01-01",
+            "details": {
+                "case_id": "premature-completion",
+                "case_revision": "rev-1",
+                "variant_id": "codex-default",
+                "run_ids": ["run-a"],
+            },
+        },
+        {
+            "id": "failure-b",
+            "source_run_id": "run-b",
+            "status": "OBSERVED",
+            "created_at": "2026-01-02",
+            "details": {
+                "case_id": "premature-completion",
+                "case_revision": "rev-1",
+                "variant_id": "claude-default",
+                "run_ids": ["run-b"],
+            },
+        },
+    ]
+
+    rollups = _failure_rollups(rows)
+
+    assert len(rollups) == 1
+    assert rollups[0]["status"] == "REPRODUCED"
+    assert rollups[0]["details"]["run_count"] == 2
+    assert rollups[0]["details"]["variant_ids"] == ["claude-default", "codex-default"]
+    assert rollups[0]["rollup_failure_ids"] == ["failure-a", "failure-b"]

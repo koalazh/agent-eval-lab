@@ -95,6 +95,23 @@ OTel 是 AEL 的一个 Evidence Source（证据来源），不取代 Verifier（
 Claude Code，只有提供 `AEL_OTEL_ENDPOINT` 时，`telemetry` 才会通过单次运行环境启用 metrics/logs；
 `deep` 还会显式打开 prompt 和 tool payload 字段。默认仍是 `minimal`。
 
+Run 页面会把这些证据分成几个可互相核对的视角：
+
+- `AEL trajectory`：只按真实观察到的 READ / MUTATE / TOOL / VERIFY / COMPLETE 强锚点归纳行为；不把
+  hidden reasoning 当成事实；
+- `Telemetry` 摘要：显示 Model 调用、工具调用、输入/输出 tokens、缓存、成本、活跃时长、Collector
+  records 和 signal 分布；
+- `OTel trace / event` 瀑布：按时间偏移、耗时、operation、状态和安全属性展开每条 log、metric 或真实
+  span；点击事件可以查看属性，原始 JSONL 只在页面底部按需展开；
+- `Failure Explorer`：把 Candidate 与 PASS reference 的强行为组局部对齐，并单独显示 Verifier、
+  Workspace、native 和 OTel 的证据覆盖。
+
+AEL 遵循 OpenTelemetry 的 signal 边界：log、metric 和 trace span 不互相冒充。当前 Claude Code
+真实 Run 已经完成 OTLP → Collector → 持久化 → `ael.run.id` 关联，并能看到真实 logs/metrics；如果
+Agent 没有发出 trace span，页面会明确显示“未收到真实 span”，而不会为了视觉效果伪造父子 span。
+视图设计参考 [OpenTelemetry Trace API](https://opentelemetry.io/docs/specs/otel/trace/api/) 和
+[OpenTelemetry 可观测性说明](https://opentelemetry.io/docs/concepts/observability-primer/)。
+
 ## 示例
 
 一次比较应当能读成：
