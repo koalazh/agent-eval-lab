@@ -33,6 +33,12 @@ AEL keeps native output and normalized events separate from verifier truth:
 
 Host-local filesystem copying is workspace isolation, not an OS or security sandbox. An Agent sandbox and approval policy remain part of its recorded variant/run fingerprint.
 
+## Current machine probe
+
+The read-only M1 probe currently reports Codex CLI 0.147.0, Claude Code 2.1.229, and Hermes 0.20.0 on this machine. Pi is not on PATH, so its capability is reported as unavailable until the CLI exists. AEL does not silently install or simulate missing Agents.
+
+The real adapters use current machine help and official machine interfaces: Codex exec JSONL, Claude non-interactive stream JSON, Pi RPC JSONL, and Hermes one-shot with a usage file. Their native output stays in each Run's native evidence directory.
+
 ## Example
 
 A future comparison should be readable as:
@@ -60,4 +66,3 @@ AEL focuses on matrix execution, differential comparison, evidence fusion, failu
 ## License
 
 Internal greenfield prototype.
-
