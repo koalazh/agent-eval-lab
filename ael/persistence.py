@@ -138,6 +138,10 @@ class Repository:
         with self._connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM agents ORDER BY id")]
 
+    def list_cases(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM cases ORDER BY id, revision")]
+
     def save_variant(self, variant: AgentVariant) -> None:
         from .hashing import config_hash
 
@@ -375,4 +379,3 @@ class Repository:
         path = self.runs_dir / run_id
         path.mkdir(parents=True, exist_ok=True)
         return path
-

@@ -1,0 +1,10 @@
+id: verify-answer-001
+fixture:
+  path: fixture
+prompt: |
+  Update answer.txt so the verifier passes.
+verify:
+  command: test "$(cat answer.txt)" = "pass"
+limits:
+  timeout_seconds: 10
+

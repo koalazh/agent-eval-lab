@@ -23,6 +23,13 @@ def test_matrix_report_groups_case_variant_trials():
     assert report["rows"][0]["classification"] == "FLAKY"
 
 
+def test_matrix_report_accepts_runner_summaries():
+    report = matrix_report(
+        [{"case_id": "case", "variant_id": "a", "outcome": "PASS"}]
+    )
+    assert report["rows"][0]["classification"] == "STABLE_PASS"
+
+
 def test_real_registry_probe_is_read_only_and_reports_current_path():
     drivers = builtin_real_drivers()
     assert set(drivers) == {"codex", "claude-code", "pi", "hermes"}
@@ -31,4 +38,3 @@ def test_real_registry_probe_is_read_only_and_reports_current_path():
         assert isinstance(capabilities.available, bool)
         assert driver.agent().detected_version
     assert collector_status()["host"] == "127.0.0.1"
-

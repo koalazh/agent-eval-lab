@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Failures</h1>
+<p class="muted">Only valid task failures (completed process plus verifier FAIL) become Failure Book entries.</p>
+{% if not failures %}<p>No observed failures yet.</p>{% endif %}
+<table>
+  <tr><th>Failure</th><th>Status</th><th>Source run</th><th>Signature</th></tr>
+  {% for failure in failures %}
+  <tr>
+    <td><a href="/failures/{{ failure.id }}"><code>{{ failure.id }}</code></a></td>
+    <td>{{ failure.status }}</td>
+    <td><a href="/runs/{{ failure.source_run_id }}"><code>{{ failure.source_run_id[:12] }}</code></a></td>
+    <td>{{ failure.signature }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
+

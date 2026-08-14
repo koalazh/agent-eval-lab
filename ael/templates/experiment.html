@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Experiment: {{ experiment_id }}</h1>
+<section>
+  <strong>Matrix</strong>
+  <p>{{ matrix.runs }} runs · Variant × Case × Trial</p>
+  <table>
+    <tr><th>Case</th><th>Variant</th><th>Trials</th><th>Classification</th><th>Outcome</th></tr>
+    {% for row in matrix.rows %}
+    <tr>
+      <td>{{ row.case_id }}</td><td>{{ row.variant_id }}</td>
+      <td>{{ row.display }}</td><td>{{ row.classification }}</td>
+      <td>{{ row.passes }} pass / {{ row.fails }} fail / {{ row.unknown }} unknown</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+<section>
+  <strong>Runs</strong>
+  <table>
+    <tr><th>Run</th><th>Case</th><th>Variant</th><th>Trial</th><th>Status</th><th>Outcome</th></tr>
+    {% for run in runs %}
+    <tr>
+      <td><a href="/runs/{{ run.id }}"><code>{{ run.id[:12] }}</code></a></td>
+      <td>{{ run.case_id }}</td><td>{{ run.variant_id }}</td><td>{{ run.trial }}</td>
+      <td>{{ run.run_status }}</td>
+      <td class="{{ run.task_outcome|lower }}">{{ run.task_outcome }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}
+

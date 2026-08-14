@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Failure: <code>{{ failure.id }}</code></h1>
+<section>
+  <p><strong>Lifecycle:</strong> {{ failure.status }}</p>
+  <p><strong>Signature:</strong> {{ failure.signature }}</p>
+  <p><strong>Evidence boundary:</strong> {{ explorer.get("note", "deterministic evidence is shown below") }}</p>
+</section>
+{% if explorer %}
+  <h2>Outcome diff</h2>
+  <pre>{{ explorer }}</pre>
+{% endif %}
+{% endblock %}
+

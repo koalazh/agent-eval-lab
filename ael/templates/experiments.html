@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Experiments</h1>
+{% if not experiments %}<p class="muted">No experiments have been run yet.</p>{% endif %}
+<table>
+  <tr><th>Experiment</th><th>Suite</th><th>Status</th><th>Trials</th><th>Concurrency</th></tr>
+  {% for experiment in experiments %}
+  <tr>
+    <td><a href="/experiments/{{ experiment.id }}">{{ experiment.id }}</a></td>
+    <td>{{ experiment.suite_id }}</td>
+    <td><span class="pill">{{ experiment.status }}</span></td>
+    <td>{{ experiment.trials }}</td>
+    <td>{{ experiment.max_concurrency }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
+

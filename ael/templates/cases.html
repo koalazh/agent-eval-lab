@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Cases</h1>
+{% if not cases %}<p class="muted">No Case revision has been persisted yet.</p>{% endif %}
+<table>
+  <tr><th>Case</th><th>Revision</th><th>Verifier</th><th>Fixture hash</th><th>Timeout</th></tr>
+  {% for case in cases %}
+  <tr>
+    <td><strong>{{ case.id }}</strong><br>{{ case.prompt }}</td>
+    <td><code>{{ case.revision[:12] }}</code></td>
+    <td><code>{{ case.verifier_json }}</code></td>
+    <td><code>{{ case.fixture_hash[:12] }}</code></td>
+    <td>{{ case.timeout_seconds }}s</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
+

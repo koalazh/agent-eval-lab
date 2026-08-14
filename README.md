@@ -66,3 +66,14 @@ AEL focuses on matrix execution, differential comparison, evidence fusion, failu
 ## License
 
 Internal greenfield prototype.
+## Runnable example
+
+The repository includes a no-cost deterministic matrix:
+
+    uv run ael run examples/experiments/fake-matrix.yaml --root .
+
+Then open the local UI:
+
+    uv run ael ui --root .
+
+The example intentionally produces both stable PASS and stable FAIL rows without calling a model.

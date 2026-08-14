@@ -1,0 +1,24 @@
+id: fake-matrix
+suite:
+  id: development
+  kind: development
+  cases:
+    - ../cases/verify-answer/case.yaml
+variants:
+  - id: fake-pass
+    agent: fake-pass
+    model: test-model
+    run_mode: controlled
+    observation_profile: minimal
+    config:
+      fake_behavior: pass
+  - id: fake-fail
+    agent: fake-fail
+    model: test-model
+    run_mode: controlled
+    observation_profile: minimal
+    config:
+      fake_behavior: fail
+trials: 3
+max_concurrency: 2
+

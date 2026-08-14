@@ -34,10 +34,10 @@ def trial_summary(outcomes: list[str]) -> dict[str, Any]:
 def matrix_report(runs: list[dict[str, Any]]) -> dict[str, Any]:
     groups: dict[tuple[str, str], list[str]] = defaultdict(list)
     for run in runs:
-        groups[(run["case_id"], run["variant_id"])].append(run["task_outcome"])
+        outcome = run.get("task_outcome", run.get("outcome", "UNKNOWN"))
+        groups[(run["case_id"], run["variant_id"])].append(outcome)
     rows = []
     for (case_id, variant_id), outcomes in sorted(groups.items()):
         summary = trial_summary(outcomes)
         rows.append({"case_id": case_id, "variant_id": variant_id, **summary})
     return {"runs": len(runs), "rows": rows}
-

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Run <code>{{ run.id }}</code></h1>
+<section>
+  <p><strong>Status:</strong> {{ run.run_status }} <strong>Task outcome:</strong> {{ run.task_outcome }}</p>
+  <p><strong>Case:</strong> {{ run.case_id }} <strong>Variant:</strong> {{ run.variant_id }} <strong>Trial:</strong> {{ run.trial }}</p>
+  <p><strong>Evidence coverage:</strong> {{ run.evidence_coverage }}</p>
+</section>
+<details open><summary>Verifier truth</summary><pre>{{ verifier }}</pre></details>
+<details open><summary>Workspace diff</summary><pre>{{ diff }}</pre></details>
+<details><summary>Native normalized events</summary><pre>{{ native }}</pre></details>
+<details><summary>Metadata</summary><pre>{{ metadata }}</pre></details>
+{% endblock %}
+

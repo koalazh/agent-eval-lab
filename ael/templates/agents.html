@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Agents</h1>
+<p class="muted">Current machine probe. Missing binaries remain unavailable; AEL does not simulate them.</p>
+<table>
+  <tr><th>Agent</th><th>Version</th><th>Available</th><th>Controlled</th><th>Notes</th></tr>
+  {% for row in agents %}
+  <tr>
+    <td><strong>{{ row.agent.display_name }}</strong><br><code>{{ row.agent.id }}</code></td>
+    <td>{{ row.agent.detected_version }}</td>
+    <td>{{ "YES" if row.capabilities.available else "NO" }}</td>
+    <td>{{ row.capabilities.controlled_support }}</td>
+    <td>{{ row.capabilities.notes|join("; ") }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
+
