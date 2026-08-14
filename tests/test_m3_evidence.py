@@ -53,3 +53,29 @@ async def test_run_persists_profile_and_evidence(fake_runner, repo, tmp_path):
     assert (evidence / "telemetry" / "raw" / "events.jsonl").exists()
     assert (evidence / "telemetry" / "summary.json").exists()
 
+
+@pytest.mark.asyncio
+async def test_normalized_event_payload_respects_profile(repo, tmp_path):
+    from ael.drivers.fake import FakeAgentDriver
+    from ael.models import ObservableEvent
+    from ael.runner import Runner
+    from tests.test_m0_core import make_experiment
+
+    class SensitiveFake(FakeAgentDriver):
+        async def execute(self, context, supervisor):
+            result = await super().execute(context, supervisor)
+            result.native_events.append(
+                ObservableEvent(
+                    "tool_call",
+                    name="bash",
+                    summary="inspect",
+                    data={"prompt": "private", "arguments": {"command": "cat private"}},
+                )
+            )
+            return result
+
+    runner = Runner(repo, {"fake-jsonl": SensitiveFake("fake-jsonl", "jsonl")})
+    experiment = make_experiment(tmp_path, "fake-jsonl", "jsonl")
+    result = (await runner.run_experiment(experiment))[0]
+    events = (Path(result["evidence_dir"]) / "native" / "events.jsonl").read_text()
+    assert "private" not in events

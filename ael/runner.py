@@ -170,7 +170,10 @@ class Runner:
         (native_dir / "stdout.log").write_text(raw_native, encoding="utf-8")
         (native_dir / "stderr.log").write_text(redact(result.stderr), encoding="utf-8")
         (native_dir / "events.jsonl").write_text(
-            "".join(json.dumps(redact(event.to_dict()), sort_keys=True) + "\n" for event in events),
+            "".join(
+                json.dumps(filter_event_data(event.to_dict(), variant.observation_profile), sort_keys=True) + "\n"
+                for event in events
+            ),
             encoding="utf-8",
         )
         telemetry_dir = evidence_dir / "telemetry"

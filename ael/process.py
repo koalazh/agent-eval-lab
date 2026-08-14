@@ -37,7 +37,11 @@ class ProcessSupervisor:
             )
         except asyncio.TimeoutError:
             self._terminate(process)
-            stdout, stderr = await process.communicate()
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=1)
+            except asyncio.TimeoutError:
+                self._kill(process)
+                stdout, stderr = await process.communicate()
             return ProcessResult(
                 process.returncode,
                 stdout.decode("utf-8", errors="replace"),
@@ -46,7 +50,10 @@ class ProcessSupervisor:
             )
         except asyncio.CancelledError:
             self._terminate(process)
-            await process.communicate()
+            try:
+                await asyncio.wait_for(process.communicate(), timeout=1)
+            except asyncio.TimeoutError:
+                self._kill(process)
             return ProcessResult(None, "", "", cancelled=True)
         return ProcessResult(
             process.returncode,
@@ -65,3 +72,13 @@ class ProcessSupervisor:
         except OSError:
             process.kill()
 
+    @staticmethod
+    def _kill(process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except OSError:
+            process.kill()
