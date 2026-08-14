@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from .agents import probe_registry
 from .comparison import compare_run_details
 from .diagnosis import create_follow_up_experiment, diagnose_run
+from .failures import promote_failure
 from .persistence import Repository
 from .reports import matrix_report
 
@@ -101,6 +102,14 @@ def create_app(root: str | Path = ".") -> FastAPI:
         source_run = repository.get_run(failure["source_run_id"])
         explorer = compare_run_details(repository, source_run["id"]) if source_run else {}
         return render(request, "failure.html", title=f"Failure {failure_id}", failure=failure, explorer=explorer)
+
+    @app.post("/failures/{failure_id}/promote")
+    async def promote_failure_page(request: Request, failure_id: str):
+        try:
+            promote_failure(repository, failure_id)
+        except (OSError, ValueError) as exc:
+            return HTMLResponse(str(exc), status_code=400)
+        return RedirectResponse(f"/failures/{failure_id}", status_code=303)
 
     return app
 

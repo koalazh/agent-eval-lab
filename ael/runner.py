@@ -216,6 +216,11 @@ class Runner:
             verifier=verifier_result.to_dict() if verifier_result else None,
             error=error,
         )
+        failure_id = None
+        if status == RunStatus.COMPLETED and outcome == TaskOutcome.FAIL:
+            from .failures import observe_failure
+
+            failure_id = observe_failure(self.repository, run_id)
         return {
             "run_id": run_id,
             "experiment_id": experiment.id,
@@ -230,6 +235,7 @@ class Runner:
             "error": error,
             "evidence_dir": str(evidence_dir),
             "fingerprint": fingerprint,
+            "failure_id": failure_id,
         }
 
     async def run_experiment(self, experiment: ExperimentSpec) -> list[dict[str, Any]]:

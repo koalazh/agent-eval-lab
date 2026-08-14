@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .cases import CaseSpec, ExperimentSpec, SuiteSpec
+from .cases import CaseSpec, ExperimentSpec, SuiteSpec, VerifierSpec
 from .models import Agent, AgentVariant, FailureStatus, RunStatus, TaskOutcome
 from .redaction import redact
 
@@ -141,6 +141,53 @@ class Repository:
     def list_cases(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM cases ORDER BY id, revision")]
+
+    def get_case(self, case_id: str, revision: str | None = None) -> CaseSpec | None:
+        query = "SELECT * FROM cases WHERE id=?"
+        params: tuple[Any, ...] = (case_id,)
+        if revision:
+            query += " AND revision=?"
+            params = (case_id, revision)
+        query += " ORDER BY revision DESC LIMIT 1"
+        with self._connect() as db:
+            row = db.execute(query, params).fetchone()
+        if not row:
+            return None
+        value = dict(row)
+        return CaseSpec(
+            id=value["id"],
+            prompt=value["prompt"],
+            fixture_path=Path(value["fixture_path"]),
+            verifier=VerifierSpec(**json.loads(value["verifier_json"])),
+            timeout_seconds=int(value["timeout_seconds"]),
+            constraints=json.loads(value["constraints_json"]),
+            source_path=Path(value["source_path"]) if value["source_path"] else None,
+            revision=value["revision"],
+            fixture_hash=value["fixture_hash"],
+        )
+
+    def suite_cases(self, suite_id: str) -> list[CaseSpec]:
+        with self._connect() as db:
+            row = db.execute("SELECT case_refs_json FROM suites WHERE id=?", (suite_id,)).fetchone()
+        if not row:
+            return []
+        cases: list[CaseSpec] = []
+        for case_id in json.loads(row["case_refs_json"]):
+            case = self.get_case(case_id)
+            if case:
+                cases.append(case)
+        return cases
+
+    def append_suite_case(self, suite_id: str, kind: str, case: CaseSpec) -> None:
+        with self._connect() as db:
+            row = db.execute("SELECT case_refs_json FROM suites WHERE id=?", (suite_id,)).fetchone()
+            refs = json.loads(row["case_refs_json"]) if row else []
+            if case.id not in refs:
+                refs.append(case.id)
+            db.execute(
+                "INSERT OR REPLACE INTO suites(id, kind, case_refs_json) VALUES (?, ?, ?)",
+                (suite_id, kind, json.dumps(refs)),
+            )
 
     def save_variant(self, variant: AgentVariant) -> None:
         from .hashing import config_hash
@@ -374,6 +421,13 @@ class Repository:
     def update_failure_status(self, failure_id: str, status: FailureStatus) -> None:
         with self._connect() as db:
             db.execute("UPDATE failures SET status=?, updated_at=? WHERE id=?", (status.value, now_iso(), failure_id))
+
+    def update_failure_details(self, failure_id: str, details: dict[str, Any]) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE failures SET details_json=?, updated_at=? WHERE id=?",
+                (json.dumps(redact(details), sort_keys=True, default=str), now_iso(), failure_id),
+            )
 
     def evidence_dir(self, run_id: str) -> Path:
         path = self.runs_dir / run_id

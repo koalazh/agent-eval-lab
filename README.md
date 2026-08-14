@@ -75,6 +75,10 @@ The deterministic Failure Explorer first checks Case revision, selects the close
 
 Diagnosis consumes that compact packet, not an unbounded trace. Without configuration it returns deterministic hypotheses and unknowns. With `AEL_DIAGNOSIS_BASE_URL`, `AEL_DIAGNOSIS_API_KEY`, and `AEL_DIAGNOSIS_MODEL`, it can call one OpenAI-compatible chat-completions endpoint; the key is used only in the request header. A follow-up action creates a user-confirmed `DRAFT` experiment over the same Case revision and records the proposed independent variable.
 
+## Failure Book
+
+Completed processes with verifier FAIL become `OBSERVED` Failure Book entries. A user can promote one to `REGRESSION_GUARDED`; AEL copies the fixture and Python grader, adds a new Case revision to the Regression Suite, and leaves the source Case untouched. Later experiments can be constructed from that persisted Suite and rerun with the same verifier.
+
 ## License
 
 Internal greenfield prototype.

@@ -5,10 +5,14 @@
   <p><strong>Lifecycle:</strong> {{ failure.status }}</p>
   <p><strong>Signature:</strong> {{ failure.signature }}</p>
   <p><strong>Evidence boundary:</strong> {{ explorer.get("note", "deterministic evidence is shown below") }}</p>
+  {% if failure.status != "REGRESSION_GUARDED" %}
+  <form method="post" action="/failures/{{ failure.id }}/promote">
+    <button type="submit">Promote to Regression</button>
+  </form>
+  {% endif %}
 </section>
 {% if explorer %}
   <h2>Outcome diff</h2>
   <pre>{{ explorer }}</pre>
 {% endif %}
 {% endblock %}
-
