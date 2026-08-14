@@ -7,7 +7,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .cases import ExperimentSpec, load_experiment
+from .cases import ExperimentSpec, SuiteSpec, load_experiment
 from .comparison import compare_run_details
 from .persistence import Repository
 from .redaction import redact
@@ -68,7 +68,7 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
             "status": "DRAFT",
             "requires_user_confirmation": True,
             "proposed_independent_variable": proposed_variable,
-            "same_case_revision": candidate.get("outcome") is not None,
+            "same_case_revision": bool(candidate.get("case_revision")),
             "trials": 5,
         },
         "source_run_id": run_id,
@@ -153,11 +153,19 @@ def create_follow_up_experiment(repository: Repository, run_id: str) -> Experime
     if not source_path.exists():
         raise ValueError("source experiment definition is unavailable; cannot create a runnable follow-up")
     original = load_experiment(source_path)
+    persisted_case = repository.get_case(run["case_id"], run["case_revision"])
+    if not persisted_case:
+        raise ValueError("source Case revision is unavailable; cannot create a same-revision follow-up")
+    cases = tuple(
+        persisted_case if case.id == persisted_case.id else case
+        for case in original.suite.cases
+    )
+    suite = SuiteSpec(original.suite.id, original.suite.kind, cases)
     packet = build_diagnosis_packet(repository, run_id)
     changed = ((packet.get("best_next_experiment") or {}).get("proposed_independent_variable") or "UNSPECIFIED")
     follow_up = ExperimentSpec(
         id=f"follow-up-{original.id}-{run_id[:8]}",
-        suite=original.suite,
+        suite=suite,
         variants=original.variants,
         trials=max(5, original.trials),
         max_concurrency=original.max_concurrency,
@@ -173,4 +181,3 @@ def create_follow_up_experiment(repository: Repository, run_id: str) -> Experime
     )
     repository.save_experiment(follow_up, status="DRAFT", follow_up_of=run_id)
     return follow_up
-

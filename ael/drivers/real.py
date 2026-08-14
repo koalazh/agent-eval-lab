@@ -55,6 +55,34 @@ def _normalize(raw: dict[str, Any], source: str) -> ObservableEvent:
     raw_type = str(raw.get("type") or raw.get("method") or raw.get("event") or "")
     lowered = raw_type.lower()
     payload = raw.get("params") if isinstance(raw.get("params"), dict) else raw
+    nested_item = raw.get("item")
+    if isinstance(nested_item, dict):
+        payload = nested_item
+        raw_type = str(nested_item.get("type") or raw_type)
+        lowered = raw_type.lower()
+    message = raw.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type") or "").lower()
+            if block_type in {"tool_use", "tool_call", "function_call"}:
+                return ObservableEvent(
+                    kind="tool_call",
+                    name=str(block.get("name") or block.get("tool_name") or "tool"),
+                    summary="tool call",
+                    source=source,
+                    data=raw,
+                )
+            if block_type in {"tool_result", "tool_output", "function_result"}:
+                return ObservableEvent(
+                    kind="tool_result",
+                    name=str(block.get("name") or block.get("tool_name") or "tool"),
+                    summary="tool result",
+                    source=source,
+                    data=raw,
+                )
     if "command" in lowered or "exec" in lowered or "bash" in lowered:
         kind = "command"
     elif "file" in lowered or "patch" in lowered or "edit" in lowered:
@@ -63,7 +91,7 @@ def _normalize(raw: dict[str, Any], source: str) -> ObservableEvent:
         kind = "tool_result"
     elif "tool" in lowered or "function" in lowered:
         kind = "tool_call"
-    elif "message" in lowered or "text" in lowered or "delta" in lowered:
+    elif "message" in lowered or "text" in lowered or "delta" in lowered or lowered in {"assistant", "user"}:
         kind = "message"
     elif "turn" in lowered or "agent_end" in lowered or "complete" in lowered or "result" in lowered:
         kind = "final"
@@ -219,12 +247,23 @@ class ClaudeCodeDriver(BinaryAgentDriver):
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
+        env = dict(run_context.env)
+        if run_context.observation_profile.value in {"telemetry", "deep"}:
+            env["CLAUDE_CODE_ENABLE_TELEMETRY"] = "1"
+            if env.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+                env["OTEL_METRICS_EXPORTER"] = "otlp"
+                env["OTEL_LOGS_EXPORTER"] = "otlp"
+            if run_context.observation_profile.value == "deep":
+                env["OTEL_LOG_USER_PROMPTS"] = "1"
+                env["OTEL_LOG_TOOL_DETAILS"] = "1"
+                env["OTEL_LOG_TOOL_CONTENT"] = "1"
         command = [
             self._binary_path(),
             "-p",
             run_context.case_prompt,
             "--output-format",
             "stream-json",
+            "--verbose",
             "--no-session-persistence",
             "--add-dir",
             str(run_context.workspace),
@@ -239,7 +278,7 @@ class ClaudeCodeDriver(BinaryAgentDriver):
         result = await process_supervisor.run(
             command,
             cwd=run_context.workspace,
-            env=run_context.env,
+            env=env,
             timeout_seconds=run_context.timeout_seconds,
         )
         events = [self.normalize_native_event(item) for item in _json_lines(result.stdout)]
@@ -423,6 +462,16 @@ class HermesDriver(BinaryAgentDriver):
                     usage = loaded
             except json.JSONDecodeError:
                 pass
+        if usage.get("failed") is True:
+            return DriverResult(
+                exit_code=1,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                usage=usage,
+                process_error="Hermes usage report marked the run failed",
+                timed_out=result.timed_out,
+                cancelled=result.cancelled,
+            )
         events = [
             ObservableEvent("message", name="hermes", summary="oneshot output", source="native"),
             ObservableEvent("final", name="hermes", summary="completed", source="native"),
@@ -439,4 +488,3 @@ class HermesDriver(BinaryAgentDriver):
             timed_out=result.timed_out,
             cancelled=result.cancelled,
         )
-

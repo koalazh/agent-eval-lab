@@ -181,7 +181,7 @@ class Runner:
         telemetry_raw = telemetry_dir / "raw"
         telemetry_raw.mkdir(parents=True, exist_ok=True)
         (telemetry_raw / "events.jsonl").write_text(
-            "".join(json.dumps(filter_event_data(event.to_dict(), variant.observation_profile), sort_keys=True) + "\\n" for event in events if event.source == "otel"),
+            "".join(json.dumps(filter_event_data(event.to_dict(), variant.observation_profile), sort_keys=True) + "\n" for event in events if event.source == "otel"),
             encoding="utf-8",
         )
         (telemetry_dir / "summary.json").write_text(json.dumps(redact(result.usage), indent=2, sort_keys=True), encoding="utf-8")

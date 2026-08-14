@@ -46,11 +46,20 @@ class CaseSpec:
         if not self.fixture_hash:
             object.__setattr__(self, "fixture_hash", hash_file_tree(self.fixture_path))
         if not self.revision:
+            verifier_fingerprint = self.verifier.to_dict()
+            if self.verifier.python:
+                verifier_path = Path(self.verifier.python)
+                if not verifier_path.is_absolute() and self.source_path:
+                    verifier_path = self.source_path.parent / verifier_path
+                verifier_fingerprint = {
+                    **verifier_fingerprint,
+                    "content_hash": hash_file_tree(verifier_path),
+                }
             payload = {
                 "id": self.id,
                 "prompt": self.prompt,
                 "fixture_hash": self.fixture_hash,
-                "verifier": self.verifier.to_dict(),
+                "verifier": verifier_fingerprint,
                 "constraints": self.constraints,
                 "timeout_seconds": self.timeout_seconds,
             }
@@ -81,7 +90,12 @@ class SuiteSpec:
     cases: tuple[CaseSpec, ...]
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "kind": self.kind, "cases": [case.id for case in self.cases]}
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "cases": [case.id for case in self.cases],
+            "case_revisions": [{"id": case.id, "revision": case.revision} for case in self.cases],
+        }
 
 
 @dataclass(frozen=True)
@@ -186,4 +200,3 @@ def load_experiment(path: str | Path, case_root: str | Path | None = None) -> Ex
         source_path=source,
         metadata=dict(raw.get("metadata") or {}),
     )
-

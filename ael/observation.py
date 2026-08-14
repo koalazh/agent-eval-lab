@@ -19,6 +19,8 @@ _SENSITIVE_KEYS = {
     "tool_arguments",
     "tool_result",
     "tool_results",
+    "command",
+    "commands",
     "result",
     "results",
     "transcript",
@@ -55,4 +57,3 @@ def filter_jsonl(text: str, profile: ObservationProfile) -> str:
 def filter_event_data(data: dict[str, Any], profile: ObservationProfile) -> dict[str, Any]:
     value = data if profile == ObservationProfile.DEEP else _strip_sensitive(data)
     return redact(value)
-

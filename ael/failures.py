@@ -8,8 +8,8 @@ from typing import Any
 
 import yaml
 
-from .cases import CaseSpec, ExperimentSpec, SuiteSpec
-from .hashing import canonical_json, sha256_text
+from .cases import CaseSpec, ExperimentSpec, SuiteSpec, load_case
+from .hashing import canonical_json, hash_file_tree, sha256_text
 from .models import AgentVariant, FailureStatus
 from .persistence import Repository
 
@@ -63,6 +63,12 @@ def promote_failure(repository: Repository, failure_id: str) -> CaseSpec:
     source_case = repository.get_case(source_run["case_id"], source_run["case_revision"])
     if not source_case:
         raise ValueError("source Case revision is unavailable")
+    if hash_file_tree(source_case.fixture_path) != source_case.fixture_hash:
+        raise ValueError("source fixture no longer matches the persisted Case revision")
+    if source_case.source_path and source_case.source_path.exists():
+        current_case = load_case(source_case.source_path)
+        if current_case.revision != source_case.revision:
+            raise ValueError("source Case no longer matches the persisted revision")
     target_id = f"regression-{_safe_name(source_case.id)}-{failure_id.removeprefix('failure-')[:8]}"
     case_dir = repository.root / "cases" / "regression" / target_id
     fixture_dir = case_dir / "fixture"
@@ -86,8 +92,6 @@ def promote_failure(repository: Repository, failure_id: str) -> CaseSpec:
     }
     source_yaml = case_dir / "case.yaml"
     source_yaml.write_text(yaml.safe_dump(case_yaml, sort_keys=False), encoding="utf-8")
-    from .cases import load_case
-
     promoted = load_case(source_yaml)
     repository.save_case(promoted)
     repository.append_suite_case("regression", "regression", promoted)
@@ -117,4 +121,3 @@ def build_regression_experiment(
         max_concurrency=max(1, max_concurrency),
         metadata={"source": "Failure Book regression suite"},
     )
-

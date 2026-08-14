@@ -186,6 +186,7 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
         "candidate": {
             "status": candidate["run_status"],
             "outcome": candidate["task_outcome"],
+            "case_revision": candidate["case_revision"],
             "coverage": candidate.get("evidence_coverage", {}),
         },
         "artifact_diff": artifact_diff(repository, candidate),

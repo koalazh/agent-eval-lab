@@ -38,6 +38,25 @@ def make_experiment(root: Path, agent_id: str, behavior: str = "pass", trials: i
     )
 
 
+def test_python_verifier_content_changes_case_revision(tmp_path):
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "answer.txt").write_text("wrong\n", encoding="utf-8")
+    grader = tmp_path / "grader.py"
+    grader.write_text("print('v1')\n", encoding="utf-8")
+    case_kwargs = dict(
+        id="python-case",
+        prompt="check it",
+        fixture_path=fixture,
+        verifier=VerifierSpec(python="grader.py"),
+        source_path=tmp_path / "case.yaml",
+    )
+    first = CaseSpec(**case_kwargs)
+    grader.write_text("print('v2')\n", encoding="utf-8")
+    second = CaseSpec(**case_kwargs)
+    assert first.revision != second.revision
+
+
 @pytest.mark.asyncio
 async def test_m0_case_run_verify_persist(fake_runner, repo, tmp_path):
     experiment = make_experiment(tmp_path, "fake-pass", "pass")
@@ -83,4 +102,3 @@ async def test_trials_are_isolated_and_flaky_is_observable(fake_runner, repo, tm
     results = await fake_runner.run_experiment(experiment)
     assert [item["outcome"] for item in results] == ["PASS", "FAIL", "PASS"]
     assert len({item["run_id"] for item in results}) == 3
-

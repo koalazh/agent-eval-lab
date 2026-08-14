@@ -46,8 +46,11 @@ async def test_diagnosis_is_structured_and_followup_is_draft(tmp_path):
     assert packet["model_assisted"] is False
     assert packet["best_next_experiment"]["requires_user_confirmation"] is True
 
+    original_revision = repo.get_run(run["run_id"])["case_revision"]
+    (experiment.suite.cases[0].fixture_path / "answer.txt").write_text("fixture changed\n", encoding="utf-8")
     follow_up = create_follow_up_experiment(repo, run["run_id"])
     assert follow_up.id.startswith("follow-up-diagnosis-exp-")
+    assert follow_up.suite.cases[0].revision == original_revision
     stored = next(item for item in repo.list_experiments() if item["id"] == follow_up.id)
     assert stored["status"] == "DRAFT"
     assert stored["follow_up_of"] == run["run_id"]
@@ -56,4 +59,3 @@ async def test_diagnosis_is_structured_and_followup_is_draft(tmp_path):
 def test_diagnosis_without_reference_is_explicit(tmp_path):
     repo = Repository(tmp_path)
     assert diagnose_run(repo, "missing") == {}
-

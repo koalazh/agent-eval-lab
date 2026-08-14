@@ -1,0 +1,27 @@
+# Manual-only live smoke.
+# This file is never invoked by ordinary tests and does not contain credentials.
+id: live-smoke
+suite:
+  id: smoke
+  kind: smoke
+  cases:
+    - ../cases/verify-answer/case.yaml
+variants:
+  - id: codex-controlled
+    agent: codex
+    model: UNKNOWN
+    run_mode: controlled
+    observation_profile: minimal
+  - id: claude-controlled
+    agent: claude-code
+    model: UNKNOWN
+    run_mode: controlled
+    observation_profile: minimal
+  - id: hermes-controlled
+    agent: hermes
+    model: UNKNOWN
+    run_mode: controlled
+    observation_profile: minimal
+trials: 1
+max_concurrency: 1
+

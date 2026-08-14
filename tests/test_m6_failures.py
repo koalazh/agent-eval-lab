@@ -73,3 +73,13 @@ async def test_promote_copies_fixture_and_regression_suite_can_rerun(tmp_path):
     assert result["case_id"] == promoted.id
     assert result["outcome"] == "PASS"
 
+
+@pytest.mark.asyncio
+async def test_promotion_rejects_changed_source_fixture(tmp_path):
+    repo = Repository(tmp_path)
+    experiment = load_experiment(write_experiment(tmp_path))
+    run = (await Runner(repo, {"fake-fail": FakeAgentDriver("fake-fail", "fail")}).run_experiment(experiment))[0]
+    source_fixture = experiment.suite.cases[0].fixture_path / "answer.txt"
+    source_fixture.write_text("changed after run\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="no longer matches"):
+        promote_failure(repo, run["failure_id"])

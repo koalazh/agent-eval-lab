@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ael.agents import builtin_real_drivers, collector_status
+from ael.drivers.real import ClaudeCodeDriver, CodexDriver
 from ael.reports import matrix_report, trial_summary
 
 
@@ -38,3 +39,25 @@ def test_real_registry_probe_is_read_only_and_reports_current_path():
         assert isinstance(capabilities.available, bool)
         assert driver.agent().detected_version
     assert collector_status()["host"] == "127.0.0.1"
+
+
+def test_codex_nested_command_event_is_normalized_to_command():
+    event = CodexDriver().normalize_native_event(
+        {
+            "type": "item.completed",
+            "item": {"type": "command_execution", "command": "pytest -q"},
+        }
+    )
+    assert event.kind == "command"
+    assert event.summary == "pytest -q"
+
+
+def test_claude_assistant_tool_use_is_normalized_to_tool_call():
+    event = ClaudeCodeDriver().normalize_native_event(
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {}}]},
+        }
+    )
+    assert event.kind == "tool_call"
+    assert event.name == "Bash"

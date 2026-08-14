@@ -6,5 +6,4 @@ prompt: |
 verify:
   command: test "$(cat answer.txt)" = "pass"
 limits:
-  timeout_seconds: 10
-
+  timeout_seconds: 120

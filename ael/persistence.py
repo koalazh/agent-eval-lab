@@ -172,8 +172,11 @@ class Repository:
         if not row:
             return []
         cases: list[CaseSpec] = []
-        for case_id in json.loads(row["case_refs_json"]):
-            case = self.get_case(case_id)
+        for reference in json.loads(row["case_refs_json"]):
+            if isinstance(reference, dict):
+                case = self.get_case(reference["id"], reference.get("revision"))
+            else:
+                case = self.get_case(reference)
             if case:
                 cases.append(case)
         return cases
@@ -181,9 +184,13 @@ class Repository:
     def append_suite_case(self, suite_id: str, kind: str, case: CaseSpec) -> None:
         with self._connect() as db:
             row = db.execute("SELECT case_refs_json FROM suites WHERE id=?", (suite_id,)).fetchone()
-            refs = json.loads(row["case_refs_json"]) if row else []
-            if case.id not in refs:
-                refs.append(case.id)
+            raw_refs = json.loads(row["case_refs_json"]) if row else []
+            refs = [
+                reference if isinstance(reference, dict) else {"id": reference, "revision": None}
+                for reference in raw_refs
+            ]
+            if not any(reference.get("id") == case.id for reference in refs):
+                refs.append({"id": case.id, "revision": case.revision})
             db.execute(
                 "INSERT OR REPLACE INTO suites(id, kind, case_refs_json) VALUES (?, ?, ?)",
                 (suite_id, kind, json.dumps(refs)),
@@ -246,7 +253,11 @@ class Repository:
         with self._connect() as db:
             db.execute(
                 "INSERT OR REPLACE INTO suites VALUES (?, ?, ?)",
-                (suite.id, suite.kind, json.dumps([case.id for case in suite.cases])),
+                (
+                    suite.id,
+                    suite.kind,
+                    json.dumps([{"id": case.id, "revision": case.revision} for case in suite.cases]),
+                ),
             )
         for case in suite.cases:
             self.save_case(case)
