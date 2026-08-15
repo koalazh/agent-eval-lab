@@ -252,6 +252,8 @@ def _operation(event: dict[str, Any]) -> str:
     kind = str(event.get("kind") or "unknown")
     name = _event_name(event)
     attrs = _attributes(event)
+    if _signal(event) == "traces":
+        return name or "真实 trace span"
     if kind in {"tool_call", "tool_result"}:
         tool = _tool_name(event)
         return f"调用 {tool}" if kind == "tool_call" else f"{tool} 返回"
@@ -297,6 +299,8 @@ def _kind_label(event: dict[str, Any]) -> str:
     """Prefer the observable operation name over a generic normalized kind."""
     kind = str(event.get("kind") or "unknown")
     name = _event_name(event).lower()
+    if _signal(event) == "traces":
+        return "真实 trace span"
     if kind in {"tool_call", "tool_result", "command", "file_change", "verification"}:
         return _KIND_LABELS.get(kind, kind)
     if name == "api_request":
@@ -534,6 +538,39 @@ def _ordered_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [event for event, _, _ in timed]
 
 
+def _span_depths(events: list[dict[str, Any]]) -> dict[str, int]:
+    """Indent only real spans whose parent span is present in the evidence."""
+    parent_by_span: dict[str, str | None] = {}
+    for event in events:
+        if _signal(event) != "traces":
+            continue
+        context = _span_context(event)
+        span_id = context.get("span_id")
+        if span_id:
+            parent_by_span[str(span_id)] = str(context["parent_span_id"]) if context.get("parent_span_id") else None
+
+    depths: dict[str, int] = {}
+
+    def depth(span_id: str, visiting: set[str] | None = None) -> int:
+        if span_id in depths:
+            return depths[span_id]
+        visiting = visiting or set()
+        if span_id in visiting:
+            depths[span_id] = 0
+            return 0
+        parent = parent_by_span.get(span_id)
+        if not parent or parent not in parent_by_span:
+            depths[span_id] = 0
+            return 0
+        value = min(depth(parent, {*visiting, span_id}) + 1, 8)
+        depths[span_id] = value
+        return value
+
+    for span_id in parent_by_span:
+        depth(span_id)
+    return depths
+
+
 def _trajectory_order_key(event: dict[str, Any], index: int) -> tuple[int, float, int]:
     sequence = _number(_attributes(event).get("event.sequence"))
     if sequence is not None:
@@ -576,6 +613,9 @@ def build_trace_view(
     known = [item[2] for item in timed if item[2] is not None]
     origin = min(known) if known else None
     timed.sort(key=lambda item: (item[2] is None, item[2] or 0, item[1]))
+    span_depths = _span_depths(merged)
+    trace_count = sum(1 for event in otel_events if _signal(event) == "traces")
+    view_mode = "waterfall" if trace_count else "event_timeline" if otel_events else "native_timeline"
     latest = max((item[3] or item[2] or 0) for item in timed) if timed else 0
     total_ms = max(0.0, (latest - origin) / 1_000_000) if origin is not None else 0.0
     if total_ms <= 0 and timed:
@@ -595,6 +635,7 @@ def build_trace_view(
         signal = _signal(event)
         status, status_class = _status(event)
         category, category_label = _trace_category(event, signal)
+        span_context = _span_context(event)
         bar_left = min(98.0, max(0.0, offset_ms / total_ms * 100)) if total_ms else 0.0
         bar_width = min(42.0, max(1.2, (duration_ms or 0) / total_ms * 100)) if total_ms else 2.0
         views.append(
@@ -617,17 +658,17 @@ def build_trace_view(
                 "attributes": _safe_attributes(event),
                 "sequence": _attributes(event).get("event.sequence"),
                 "is_span": signal == "traces",
-                **_span_context(event),
+                "span_depth": span_depths.get(str(span_context.get("span_id")), 0) if signal == "traces" and span_context.get("span_id") else 0,
+                **span_context,
             }
         )
     signal_counts = Counter(_signal(event) for event in otel_events)
-    trace_count = signal_counts.get("traces", 0)
     if trace_count:
-        note = f"已收到 {trace_count} 个真实 OTel trace span；按时间和耗时展开，属性可继续查看。"
+        note = f"已收到 {trace_count} 个真实 OTel trace span；Waterfall 只使用真实 span 的 start/end 与 parent_span_id，属性可继续查看。"
     elif otel_events:
-        note = "当前 Run 未收到真实 trace span；以下按 OTel 日志 / 指标展示，不把 event 或 metric 冒充 span。"
+        note = "当前 Run 未收到真实 trace span；以下是 OTel Event Timeline（日志 / 指标），不把 event 或 metric 冒充 span。"
     else:
-        note = "当前 Run 没有 OTel 事件；以下仅展示 Agent 原生证据中可归一化的事件。"
+        note = "当前 Run 没有 OTel 事件；以下仅展示 Agent 原生 Event Timeline，原生事件不会被伪造成 OTel span。"
     return {
         "events": views,
         "otel_event_count": len(otel_events),
@@ -635,6 +676,16 @@ def build_trace_view(
         "signal_counts": dict(signal_counts),
         "trace_count": trace_count,
         "has_trace_spans": bool(trace_count),
+        "view_mode": view_mode,
+        "span_relationship_count": sum(
+            1
+            for span_id, parent_id in (
+                (context.get("span_id"), context.get("parent_span_id"))
+                for event in otel_events
+                for context in [_span_context(event)]
+            )
+            if span_id and parent_id and str(parent_id) in span_depths
+        ),
         "total_duration_ms": total_ms,
         "total_duration_label": _format_duration(total_ms) if total_ms else "未知",
         "axis_ticks": _axis_ticks(total_ms),
@@ -1010,6 +1061,10 @@ def build_evidence_sources(
 ) -> list[dict[str, Any]]:
     signal_counts = trace_view.get("signal_counts", {})
     verifier_outcome = verifier.get("outcome") or run.get("task_outcome") or "unknown"
+    otel = telemetry.get("otel") if isinstance(telemetry.get("otel"), dict) else {}
+    lifecycle = otel.get("ael_lifecycle") if isinstance(otel.get("ael_lifecycle"), dict) else {}
+    lifecycle_spans = lifecycle.get("span_count")
+    lifecycle_exported = lifecycle.get("exported") is True
     return [
         {
             "label": "Verifier",
@@ -1040,6 +1095,12 @@ def build_evidence_sources(
             "value": f"{signal_counts.get('traces', 0)} 个 span" if signal_counts.get("traces", 0) else "未收到真实 span",
             "status": "observed" if signal_counts.get("traces", 0) else "unknown",
             "detail": "没有真实 span 时保持未知，不从 logs / metrics 推断 trace 层级。",
+        },
+        {
+            "label": "AEL lifecycle OTel",
+            "value": f"{lifecycle_spans} 个 span" if lifecycle_exported and lifecycle_spans is not None else "UNKNOWN",
+            "status": "observed" if lifecycle_exported and lifecycle_spans else "unknown",
+            "detail": "AEL-owned lifecycle spans 通过 OTLP 导出；Claude/vendor trace 只按 ael.run.id 关联，不建立伪造 parent。",
         },
         {
             "label": "Agent 原生证据",

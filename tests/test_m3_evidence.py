@@ -8,6 +8,7 @@ import pytest
 from ael.models import ObservationProfile
 from ael.observation import filter_jsonl
 from ael.otel_ingest import ingest_collector_output
+from ael.otel_lifecycle import AELLifecycle
 from ael.redaction import redact_text
 
 
@@ -79,6 +80,46 @@ def test_collector_output_is_correlated_by_run_id(tmp_path: Path):
     assert summary["evidence"].startswith("real OTLP")
 
 
+def test_otel_ingest_does_not_classify_free_text_as_an_action(tmp_path: Path):
+    collector = tmp_path / ".ael" / "otel"
+    collector.mkdir(parents=True)
+    payload = {
+        "resourceLogs": [
+            {
+                "resource": {"attributes": [{"key": "ael.run.id", "value": {"stringValue": "run-1"}}]},
+                "scopeLogs": [
+                    {
+                        "logRecords": [
+                            {"body": {"stringValue": "edit the file and run bash"}, "timeUnixNano": "1"}
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+    (collector / "logs.jsonl").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    events, _ = ingest_collector_output(tmp_path, "run-1", tmp_path / "run")
+
+    assert events[0].kind == "unknown"
+
+
+def test_ael_lifecycle_payload_keeps_real_parent_relationships():
+    lifecycle = AELLifecycle(endpoint=None, resource={"ael.run.id": "run-1"})
+    root = lifecycle.start("ael.run")
+    child = lifecycle.start("agent.execute", parent_span_id=root)
+    lifecycle.end(child, attributes={"ael.run.status": "COMPLETED"})
+    lifecycle.end(root, attributes={"ael.task.outcome": "PASS"})
+
+    spans = lifecycle.payload()["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    export = lifecycle.export()
+    assert len(spans) == 2
+    assert spans[1]["parentSpanId"] == spans[0]["spanId"]
+    assert spans[0]["traceId"] == spans[1]["traceId"]
+    assert export["exported"] is False
+    assert export["endpoint_configured"] is False
+
+
 @pytest.mark.asyncio
 async def test_run_persists_profile_and_evidence(fake_runner, repo, tmp_path):
     from tests.test_m0_core import make_experiment
@@ -91,6 +132,10 @@ async def test_run_persists_profile_and_evidence(fake_runner, repo, tmp_path):
     assert (evidence / "native" / "raw.jsonl").exists()
     assert (evidence / "telemetry" / "raw" / "events.jsonl").exists()
     assert (evidence / "telemetry" / "summary.json").exists()
+    lifecycle = json.loads((evidence / "telemetry" / "otel" / "ael-lifecycle.json").read_text())
+    assert lifecycle["export"]["span_count"] == 5
+    summary = json.loads((evidence / "telemetry" / "summary.json").read_text())
+    assert summary["otel"]["ael_lifecycle"]["span_count"] == 5
 
 
 @pytest.mark.asyncio

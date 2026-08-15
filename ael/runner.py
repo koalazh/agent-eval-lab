@@ -17,6 +17,7 @@ from .process import ProcessSupervisor
 from .redaction import redact
 from .observation import filter_event_data, filter_jsonl
 from .otel_ingest import ingest_collector_output
+from .otel_lifecycle import AELLifecycle
 from .verifier import run_verifier
 from .workspace import WorkspaceManager
 
@@ -89,7 +90,26 @@ class Runner:
             raise ValueError(f"未注册 driver：{variant.agent_id}")
         fingerprint = self._fingerprint(experiment, case, variant, trial, driver)
         self.repository.create_run(run_id, experiment, case, variant, trial, fingerprint, evidence_dir)
-        workspace, before = self.workspaces.create(case.fixture_path, run_id)
+        lifecycle = AELLifecycle(
+            endpoint=(os.environ.get("AEL_OTEL_ENDPOINT") if variant.observation_profile in {ObservationProfile.TELEMETRY, ObservationProfile.DEEP} else None),
+            resource={
+                "ael.experiment.id": experiment.id,
+                "ael.run.id": run_id,
+                "ael.case.id": case.id,
+                "ael.variant.id": variant.id,
+                "ael.trial": trial,
+            },
+        )
+        run_span = lifecycle.start("ael.run", attributes={"ael.lifecycle.phase": "run"})
+        prepare_span = lifecycle.start("workspace.prepare", parent_span_id=run_span)
+        try:
+            workspace, before = self.workspaces.create(case.fixture_path, run_id)
+            lifecycle.end(prepare_span, attributes={"ael.workspace.ready": True})
+        except Exception as exc:
+            lifecycle.end(prepare_span, error=f"{type(exc).__name__}: {exc}")
+            lifecycle.end(run_span, error=f"{type(exc).__name__}: {exc}")
+            lifecycle.export()
+            raise
         env = dict(os.environ)
         env.update(
             {
@@ -141,6 +161,7 @@ class Runner:
         error = None
         changes = None
         started = time.monotonic()
+        agent_span = lifecycle.start("agent.execute", parent_span_id=run_span)
         try:
             result = await asyncio.wait_for(driver.execute(context, self.supervisor), timeout=max(1, case.timeout_seconds))
             if result.cancelled:
@@ -155,7 +176,16 @@ class Runner:
                 error = "Agent exit code 不可用"
             else:
                 status = RunStatus.COMPLETED
-                verifier_result = await run_verifier(case, workspace, evidence_dir / "verifier", self.supervisor)
+                verifier_span = lifecycle.start("verifier.execute", parent_span_id=run_span)
+                try:
+                    verifier_result = await run_verifier(case, workspace, evidence_dir / "verifier", self.supervisor)
+                    lifecycle.end(
+                        verifier_span,
+                        attributes={"ael.verifier.outcome": verifier_result.outcome},
+                    )
+                except Exception as exc:
+                    lifecycle.end(verifier_span, error=f"{type(exc).__name__}: {exc}")
+                    raise
                 if verifier_result.outcome == "PASS":
                     outcome = TaskOutcome.PASS
                 elif verifier_result.outcome == "FAIL":
@@ -171,8 +201,23 @@ class Runner:
         except Exception as exc:
             status, error, result = RunStatus.PROCESS_ERROR, f"{type(exc).__name__}: {exc}", DriverResult(process_error=f"{type(exc).__name__}: {exc}")
         finally:
+            lifecycle.end(
+                agent_span,
+                error=error if status not in {RunStatus.COMPLETED} else None,
+                attributes={"ael.run.status": status.value},
+            )
+            capture_span = lifecycle.start("workspace.capture", parent_span_id=run_span)
             try:
                 changes = self.workspaces.capture(workspace, before, evidence_dir / "workspace")
+                lifecycle.end(
+                    capture_span,
+                    attributes={
+                        "ael.workspace.changed_files": len((changes or {}).get("changed_files") or []),
+                    },
+                )
+            except Exception as exc:
+                lifecycle.end(capture_span, error=f"{type(exc).__name__}: {exc}")
+                raise
             finally:
                 self.workspaces.cleanup(workspace)
         otel_events: list[ObservableEvent] = []
@@ -182,10 +227,31 @@ class Runner:
             "events": 0,
             "evidence": "insufficient evidence",
         }
+        lifecycle.end(
+            run_span,
+            error=error if status not in {RunStatus.COMPLETED} else None,
+            attributes={
+                "ael.run.status": status.value,
+                "ael.task.outcome": outcome.value,
+            },
+        )
+        lifecycle_export = lifecycle.export()
+        lifecycle_dir = evidence_dir / "telemetry" / "otel"
+        lifecycle_dir.mkdir(parents=True, exist_ok=True)
+        (lifecycle_dir / "ael-lifecycle.json").write_text(
+            json.dumps(
+                {"payload": lifecycle.payload(), "export": lifecycle_export},
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        otel_summary["ael_lifecycle"] = lifecycle_export
         if variant.observation_profile in {ObservationProfile.TELEMETRY, ObservationProfile.DEEP}:
             if os.environ.get("AEL_OTEL_ENDPOINT"):
                 await asyncio.sleep(1.0)
             otel_events, otel_summary = ingest_collector_output(self.repository.root, run_id, evidence_dir)
+        otel_summary["ael_lifecycle"] = lifecycle_export
         events = [*result.native_events, *otel_events]
         native_dir = evidence_dir / "native"
         native_dir.mkdir(parents=True, exist_ok=True)

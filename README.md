@@ -82,13 +82,17 @@ fixture 在整次真实实验后保持原始 revision。
 
 Run 默认使用 `minimal` 观察配置。`minimal` 和 `telemetry` 保留归一化行为摘要，但会省略结构化 prompt（提示词）、tool arguments（工具参数）、tool results（工具结果）和 transcript（转录）字段；只有显式选择 `deep` 才会保留这些字段，并继续进行凭据脱敏。每个 Run 都会在 fingerprint 中记录 ObservationProfile。
 
-阶段 B 的 Claude Code OTel 端到端切片已在本机真实验证：Claude Code 2.1.229 → OTLP
-HTTP → 仅本机 Collector → `.ael/otel/{logs,metrics,traces}.jsonl` → 按 `ael.run.id`
-摄取 → Run 证据 / Explicit Contrast。正式阶段 A 的 Run
-`f0dab3c6f17a4447b392513d2ccc26a4` 实际收到了 2 个 log 记录、1 个 metric 记录、35
-个关联事件，包含 6 次 Model 调用、5 次工具调用、15,794 个输入 tokens、3,273 个输出 tokens；
-Run 页面和 Explicit Contrast 都可见这些结果。这里的 35 个事件来自真实 Collector 输出，不是环境变量、
-空文件或 debug exporter 存在的证明。
+Claude Code OTel 的端到端路径是：Claude Code → OTLP HTTP → 仅本机 Collector →
+`.ael/otel/{logs,metrics,traces}.jsonl` → 按 `ael.run.id` 摄取 → Run 证据 / Explicit Contrast。
+每个 telemetry / deep Managed Run 还会由 AEL 自己产生 `ael.run`、`workspace.prepare`、
+`agent.execute`、`verifier.execute`、`workspace.capture` lifecycle spans；AEL trace 与 vendor
+Agent trace 不建立伪造 parent，只通过 `ael.run.id` 关联。
+
+当前真实 Claude proof Run `d0b926f4b18b4be482a6f7dd57053e1d`（Claude Code 2.1.229，1 个本地
+Case，最终 PASS）在 Run evidence 中保存了 5 个 AEL lifecycle spans；Collector 按同一
+`ael.run.id` 收到 38 个 OTel log、15 个 OTel metric 和 5 个真实 AEL trace span。证据同时记录
+`ael-lifecycle.json` 的 OTLP export receipt 和 `telemetry/summary.json` 的 signal counts，不是
+环境变量、空文件或 debug exporter 存在的证明。
 
 Collector 只绑定 loopback，使用 Docker 启动（不会启动 Grafana/Tempo/Prometheus/Jaeger）：
 
@@ -106,7 +110,9 @@ OTel 是 AEL 的一个 Evidence Source（证据来源），不取代 Verifier（
 （environment truth）或 Agent native trace；没有真实 telemetry 时 UI 会显示“证据不足”。对于
 Claude Code，只有提供 `AEL_OTEL_ENDPOINT` 时，`telemetry` 才会通过单次运行环境启用 metrics/logs；
 `deep` 还会显式打开 prompt 和 tool payload 字段。Codex 当前 CLI 不提供可用 OTel 输出，Run 页面会
-明确显示“Agent 未提供 OTel”，并回退到 native / usage 证据；AEL 不会把缺失的 OTel 伪造成 span。
+明确显示“Agent 未提供 OTel”，并回退到 native / usage 证据；没有真实 trace span 时显示 Event
+Timeline，不把 logs / metrics / native event 推断成 span hierarchy。只有真实 span 才显示 Trace
+Waterfall，并使用真实的 `trace_id`、`span_id`、`parent_span_id`、start/end 和 duration。
 默认仍是 `minimal`。
 
 Run 页面会把这些证据分成几个可互相核对的视角：

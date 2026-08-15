@@ -15,6 +15,24 @@ _SIGNAL_FILES = {
     "logs": "logs.jsonl",
 }
 
+_STANDARD_EVENT_KINDS = {
+    "tool_call": "tool_call",
+    "tool_decision": "tool_call",
+    "tool_result": "tool_result",
+    "tool_use": "tool_call",
+    "tool_use_result": "tool_result",
+    "command_execution": "command",
+    "file_change": "file_change",
+    "verification": "verification",
+    "agent_end": "final",
+    "agent.end": "final",
+    "completion": "final",
+}
+
+_VENDOR_EVENT_KINDS = {
+    "claude_code.code_edit_tool.decision": "file_change",
+}
+
 
 def _otlp_value(value: Any) -> Any:
     if not isinstance(value, dict):
@@ -71,20 +89,20 @@ def _text(value: Any) -> str:
 
 
 def _event_kind(name: str, attributes: dict[str, Any], body: str) -> str:
-    text = " ".join((name, body, *(str(value) for value in attributes.values()))).lower()
-    if any(token in text for token in ("tool_call", "tool-use", "tool use", "tool.call", "tool_decision")):
-        return "tool_call"
-    if any(token in text for token in ("tool_result", "tool-result", "tool result", "tool.result")):
-        return "tool_result"
-    if any(token in text for token in ("command_execution", "command-execution", "shell", "bash")):
-        return "command"
-    if any(token in text for token in ("file_change", "file-change", "edit", "patch")):
-        return "file_change"
-    if any(token in text for token in ("verification", "verify", "pytest", "test")):
-        return "verification"
-    if any(token in text for token in ("complete", "completion", "settled", "agent_end", "agent.end")):
-        return "final"
-    return "message"
+    explicit = str(
+        attributes.get("event.kind")
+        or attributes.get("event.type")
+        or attributes.get("ael.event.kind")
+        or ""
+    ).strip().lower()
+    if explicit in _STANDARD_EVENT_KINDS:
+        return _STANDARD_EVENT_KINDS[explicit]
+    normalized_name = str(name or "").strip().lower()
+    if normalized_name in _STANDARD_EVENT_KINDS:
+        return _STANDARD_EVENT_KINDS[normalized_name]
+    if normalized_name in _VENDOR_EVENT_KINDS:
+        return _VENDOR_EVENT_KINDS[normalized_name]
+    return "unknown"
 
 
 def _timestamp(record: dict[str, Any]) -> str | None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ael.trace_view import (
     align_trajectories,
+    build_evidence_sources,
     build_metric_snapshot,
     build_file_activity,
     build_otel_status,
@@ -65,6 +66,8 @@ def test_trace_view_keeps_signal_boundaries_and_does_not_fake_spans():
     assert view["signal_counts"] == {"metrics": 1, "logs": 2}
     assert view["trace_count"] == 0
     assert view["has_trace_spans"] is False
+    assert view["view_mode"] == "event_timeline"
+    assert view["span_relationship_count"] == 0
     assert "未收到真实 trace span" in view["note"]
     assert len(view["axis_ticks"]) == 5
     assert view["events"][0]["operation"] == "调用 Read"
@@ -90,10 +93,39 @@ def test_trace_view_exposes_real_span_context_only_for_trace_signal():
     view = build_trace_view([event], [])
 
     assert view["has_trace_spans"] is True
+    assert view["view_mode"] == "waterfall"
+    assert view["events"][0]["operation"] == "agent.run"
     assert view["events"][0]["trace_id"] == "trace-1"
     assert view["events"][0]["span_id"] == "span-1"
     assert view["events"][0]["parent_span_id"] == "parent-1"
     assert view["events"][0]["span_event_count"] == 1
+
+
+def test_trace_waterfall_indentation_uses_only_observed_parent_span_ids():
+    parent = _otel_event(
+        signal="traces",
+        kind="message",
+        name="ael.run",
+        timestamp="1000000000",
+        record={"startTimeUnixNano": "1000000000", "endTimeUnixNano": "1300000000", "spanId": "parent"},
+    )
+    child = _otel_event(
+        signal="traces",
+        kind="message",
+        name="agent.execute",
+        timestamp="1100000000",
+        record={
+            "startTimeUnixNano": "1100000000",
+            "endTimeUnixNano": "1200000000",
+            "spanId": "child",
+            "parentSpanId": "parent",
+        },
+    )
+
+    view = build_trace_view([parent, child], [])
+
+    assert view["span_relationship_count"] == 1
+    assert {event["span_id"]: event["span_depth"] for event in view["events"]} == {"parent": 0, "child": 1}
 
 
 def test_trace_view_keeps_tool_call_before_result_when_duration_is_inferred():
@@ -246,6 +278,26 @@ def test_native_overview_does_not_present_zero_otel_signals_as_evidence():
     assert overview["cards"][-1]["value"] == "1 条"
     assert overview["cards"][-1]["detail"] == "Agent 原生记录"
     assert status["label"] == "Agent 未提供 OTel"
+
+
+def test_evidence_sources_distinguish_ael_lifecycle_from_vendor_trace():
+    sources = build_evidence_sources(
+        {"task_outcome": "PASS"},
+        {"outcome": "PASS"},
+        [],
+        {
+            "otel": {
+                "ael_lifecycle": {"exported": True, "span_count": 5},
+            }
+        },
+        {"signal_counts": {"traces": 2}},
+    )
+
+    lifecycle = next(source for source in sources if source["label"] == "AEL lifecycle OTel")
+    vendor_trace = next(source for source in sources if source["label"] == "OTel trace/span")
+    assert lifecycle["value"] == "5 个 span"
+    assert lifecycle["status"] == "observed"
+    assert vendor_trace["value"] == "2 个 span"
 
 
 def test_trajectory_alignment_marks_first_different_action():
