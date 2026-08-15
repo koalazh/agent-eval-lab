@@ -184,6 +184,10 @@ def _variant_from_raw(raw: dict[str, Any], index: int):
     return AgentVariant(
         id=variant_id,
         agent_id=agent_id,
+        name=str(raw.get("name") or ""),
+        executable=str(raw.get("executable") or ""),
+        subject_revision=str(raw.get("subject_revision") or "UNKNOWN"),
+        agent_version=str(raw.get("agent_version") or "UNKNOWN"),
         model=str(raw.get("model") or "UNKNOWN"),
         provider=str(raw.get("provider") or "UNKNOWN"),
         model_config=dict(raw.get("model_config") or {}),

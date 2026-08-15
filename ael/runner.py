@@ -54,12 +54,17 @@ class Runner:
         return {
             "ael_version": "0.1.0",
             "git_sha": git_sha(self.repository.root),
+            "variant_name": variant.name or variant.id,
             "agent_id": agent.id,
-            "agent_version": agent.detected_version or UNKNOWN,
+            "agent_version": variant.agent_version if variant.agent_version not in {"", "UNKNOWN"} else agent.detected_version or UNKNOWN,
             "driver": agent.driver,
             "driver_version": agent.detected_version or UNKNOWN,
+            "executable": variant.executable or agent.binary or UNKNOWN,
+            "subject_revision": variant.subject_revision or UNKNOWN,
             "model": variant.model,
+            "configured_model": variant.model,
             "provider": variant.provider,
+            "configured_provider": variant.provider,
             "model_config": redact(variant.model_config),
             "harness_config_hash": config_hash(variant.harness_config),
             "run_mode": variant.run_mode.value,
@@ -103,6 +108,7 @@ class Runner:
                     "ael.run.id": run_id,
                     "ael.case.id": case.id,
                     "ael.variant.id": variant.id,
+                    "ael.variant.subject_revision": variant.subject_revision,
                     "ael.trial": trial,
                 }.items()
             )

@@ -10,7 +10,7 @@ from typing import Any
 
 from .cases import ExperimentSpec, SuiteSpec
 from .comparison import compare_run_details
-from .models import AgentVariant, ObservationProfile, RunMode
+from .models import AgentVariant, RunMode
 from .persistence import Repository
 from .redaction import redact
 
@@ -224,16 +224,7 @@ def diagnose_run(repository: Repository, run_id: str) -> dict[str, Any]:
 
 
 def _variant_from_definition(raw: dict[str, Any]) -> AgentVariant:
-    return AgentVariant(
-        id=str(raw.get("id") or raw.get("agent_id") or "variant"),
-        agent_id=str(raw.get("agent_id") or raw.get("agent") or ""),
-        model=str(raw.get("model") or "default"),
-        provider=str(raw.get("provider") or "default"),
-        model_config=dict(raw.get("model_config") or {}),
-        harness_config=dict(raw.get("harness_config") or raw.get("config") or {}),
-        run_mode=RunMode(str(raw.get("run_mode") or "native")),
-        observation_profile=ObservationProfile(str(raw.get("observation_profile") or "minimal")),
-    )
+    return AgentVariant.from_dict(raw)
 
 
 def _toggle_run_mode(mode: RunMode) -> RunMode:

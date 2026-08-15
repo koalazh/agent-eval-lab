@@ -171,6 +171,12 @@ class BinaryAgentDriver:
         self.probe()
         return self._agent.binary if self._agent else self.binary
 
+    def _binary_path_for(self, run_context: RunContext) -> str:
+        configured = str(run_context.variant.executable or "").strip()
+        if configured and configured.lower() not in {"unknown", "default", "configured"}:
+            return configured
+        return self._binary_path()
+
 
 class CodexDriver(BinaryAgentDriver):
     agent_id = "codex"
@@ -191,7 +197,7 @@ class CodexDriver(BinaryAgentDriver):
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
         command = [
-            self._binary_path(),
+            self._binary_path_for(run_context),
             "exec",
             "--json",
             "--cd",
@@ -263,7 +269,7 @@ class ClaudeCodeDriver(BinaryAgentDriver):
                 env["OTEL_LOG_TOOL_DETAILS"] = "1"
                 env["OTEL_LOG_TOOL_CONTENT"] = "1"
         command = [
-            self._binary_path(),
+            self._binary_path_for(run_context),
             "-p",
             run_context.case_prompt,
             "--output-format",
@@ -327,7 +333,7 @@ class PiDriver(BinaryAgentDriver):
         )
 
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
-        command = [self._binary_path(), "--mode", "rpc", "--no-session"]
+        command = [self._binary_path_for(run_context), "--mode", "rpc", "--no-session"]
         if _explicit_setting(run_context.variant.model):
             if _explicit_setting(run_context.variant.provider):
                 command.extend(["--provider", run_context.variant.provider])
@@ -441,7 +447,7 @@ class HermesDriver(BinaryAgentDriver):
     async def execute(self, run_context: RunContext, process_supervisor: ProcessSupervisor) -> DriverResult:
         usage_file = Path(run_context.evidence_dir) / "hermes-usage.json"
         command = [
-            self._binary_path(),
+            self._binary_path_for(run_context),
             "-z",
             run_context.case_prompt,
             "--usage-file",

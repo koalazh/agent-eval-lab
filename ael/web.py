@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -171,6 +172,105 @@ def create_app(root: str | Path = ".") -> FastAPI:
     async def agents_page(request: Request):
         return render(request, "agents.html", title="Agent 配置", agents=agent_rows())
 
+    @app.get("/variants", response_class=HTMLResponse)
+    async def variants_page(request: Request):
+        rows = _variant_rows(repository, agent_rows())
+        return render(request, "variants.html", title="Variant 库", variants=rows)
+
+    @app.get("/variants/new", response_class=HTMLResponse)
+    async def new_variant_page(request: Request):
+        return render(
+            request,
+            "variant_form.html",
+            title="创建 Variant",
+            agents=agent_rows(),
+            variant={},
+            form={},
+            error=None,
+            mode="create",
+        )
+
+    @app.post("/variants/new", response_class=HTMLResponse)
+    async def create_variant_page(request: Request):
+        form = {
+            key: values
+            for key, values in parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True).items()
+        }
+        rows = agent_rows()
+        try:
+            variant = _build_variant(rows, form)
+            repository.save_variant(variant)
+        except (TypeError, ValueError) as exc:
+            return render(
+                request,
+                "variant_form.html",
+                title="创建 Variant",
+                agents=rows,
+                variant={},
+                form=form,
+                error=str(exc),
+                mode="create",
+                _status_code=400,
+            )
+        return RedirectResponse(f"/variants/{variant.id}/edit", status_code=303)
+
+    @app.get("/variants/{variant_id}/edit", response_class=HTMLResponse)
+    async def edit_variant_page(request: Request, variant_id: str):
+        variant = repository.get_variant(variant_id)
+        if not variant:
+            return HTMLResponse("未找到 Variant", status_code=404)
+        return render(
+            request,
+            "variant_form.html",
+            title=f"编辑 Variant {variant_id}",
+            agents=agent_rows(),
+            variant=variant,
+            form={},
+            error=None,
+            mode="edit",
+        )
+
+    @app.post("/variants/{variant_id}", response_class=HTMLResponse)
+    async def update_variant_page(request: Request, variant_id: str):
+        existing = repository.get_variant(variant_id)
+        if not existing:
+            return HTMLResponse("未找到 Variant", status_code=404)
+        form = {
+            key: values
+            for key, values in parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True).items()
+        }
+        rows = agent_rows()
+        try:
+            variant = _build_variant(rows, form, variant_id=variant_id)
+            repository.save_variant(variant)
+        except (TypeError, ValueError) as exc:
+            return render(
+                request,
+                "variant_form.html",
+                title=f"编辑 Variant {variant_id}",
+                agents=rows,
+                variant=existing,
+                form=form,
+                error=str(exc),
+                mode="edit",
+                _status_code=400,
+            )
+        return RedirectResponse(f"/variants/{variant.id}/edit", status_code=303)
+
+    @app.post("/variants/{variant_id}/duplicate")
+    async def duplicate_variant_page(request: Request, variant_id: str):
+        source = repository.get_variant(variant_id)
+        if not source:
+            return HTMLResponse("未找到 Variant", status_code=404)
+        source_variant = AgentVariant.from_dict(source)
+        duplicate = replace(
+            source_variant,
+            id=f"variant-{uuid.uuid4().hex[:10]}",
+            name=f"{source_variant.name or source_variant.id} copy",
+        )
+        repository.save_variant(duplicate)
+        return RedirectResponse(f"/variants/{duplicate.id}/edit", status_code=303)
+
     @app.get("/cases", response_class=HTMLResponse)
     async def cases_page(request: Request):
         return render(
@@ -260,6 +360,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
     @app.get("/experiments/new", response_class=HTMLResponse)
     async def new_experiment_page(request: Request):
         rows = agent_rows()
+        variants = _variant_rows(repository, rows)
         cases = case_options()
         case_groups = _case_groups(cases)
         requested_case = request.query_params.get("case_id")
@@ -271,11 +372,15 @@ def create_app(root: str | Path = ".") -> FastAPI:
             "new_experiment.html",
             title="新建实验",
             agents=rows,
+            variants=variants,
             cases=cases,
             case_groups=case_groups,
             selected_cases=selected_case_ids,
             selected_revisions={group["id"]: group["selected_revision"] for group in case_groups},
             selected_agents=[row["agent"]["id"] for row in rows if row["capabilities"]["available"]],
+            selected_variants=[],
+            selected_baseline=None,
+            selected_candidate=None,
             error=None,
             form={},
         )
@@ -297,11 +402,15 @@ def create_app(root: str | Path = ".") -> FastAPI:
                 "new_experiment.html",
                 title="新建实验",
                 agents=rows,
+                variants=_variant_rows(repository, rows),
                 cases=case_options(),
                 case_groups=_case_groups(case_options()),
                 selected_cases=_selected_case_ids(form),
                 selected_revisions=_selected_revisions(form),
                 selected_agents=form.get("agent_id", []),
+                selected_variants=form.get("variant_id", []),
+                selected_baseline=(form.get("baseline_variant_id") or [None])[-1],
+                selected_candidate=(form.get("candidate_variant_id") or [None])[-1],
                 error=str(exc),
                 form=form,
                 _status_code=400,
@@ -538,6 +647,79 @@ def create_app(root: str | Path = ".") -> FastAPI:
     return app
 
 
+def _variant_rows(repository: Repository, agent_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    agents = {row["agent"]["id"]: row for row in agent_rows}
+    result: list[dict[str, Any]] = []
+    for row in repository.list_variants():
+        agent_row = agents.get(row.get("agent_id"), {})
+        agent = agent_row.get("agent") or {}
+        capabilities = agent_row.get("capabilities") or {}
+        result.append(
+            {
+                **row,
+                "agent_display_name": agent.get("display_name") or row.get("agent_id") or "UNKNOWN",
+                "available": bool(capabilities.get("available")) if agent_row else False,
+                "label": _variant_label(row),
+            }
+        )
+    return result
+
+
+def _build_variant(
+    agent_rows: list[dict[str, Any]],
+    form: dict[str, list[str]],
+    *,
+    variant_id: str | None = None,
+) -> AgentVariant:
+    def first(name: str, default: str = "") -> str:
+        return (form.get(name) or [default])[-1].strip()
+
+    agent_id = first("agent_id")
+    if not agent_id:
+        raise ValueError("必须选择 Agent / driver")
+    agent_row = next((row for row in agent_rows if row["agent"]["id"] == agent_id), None)
+    if not agent_row:
+        raise ValueError(f"未找到 Agent：{agent_id}")
+    capabilities = agent_row["capabilities"]
+    if not capabilities.get("available"):
+        raise ValueError(f"Agent 当前不可用：{agent_id}")
+
+    def json_object(name: str) -> dict[str, Any]:
+        value = first(name)
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{name} 必须是 JSON 对象：{exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(f"{name} 必须是 JSON 对象")
+        return parsed
+
+    try:
+        run_mode = RunMode(first("run_mode", "native"))
+        observation_profile = ObservationProfile(first("observation_profile", "minimal"))
+    except ValueError as exc:
+        raise ValueError("运行模式或观测配置不合法") from exc
+    executable = first("executable", str(agent_row["agent"].get("binary") or agent_id))
+    if not executable:
+        raise ValueError("必须记录 executable")
+    return AgentVariant(
+        id=variant_id or f"variant-{uuid.uuid4().hex[:10]}",
+        agent_id=agent_id,
+        name=first("name") or f"{agent_row['agent'].get('display_name') or agent_id} Variant",
+        executable=executable,
+        subject_revision=first("subject_revision", "UNKNOWN") or "UNKNOWN",
+        agent_version=first("agent_version", str(agent_row["agent"].get("detected_version") or "UNKNOWN")) or "UNKNOWN",
+        model=first("model", "default") or "default",
+        provider=first("provider", "default") or "default",
+        model_config=json_object("model_config"),
+        harness_config=json_object("harness_config"),
+        run_mode=run_mode,
+        observation_profile=observation_profile,
+    )
+
+
 def _build_experiment(
     repository: Repository,
     agent_rows: list[dict[str, Any]],
@@ -593,10 +775,51 @@ def _build_experiment(
         selected_case_ids.add(case.id)
         cases.append(case)
 
+    capabilities = {row["agent"]["id"]: row["capabilities"] for row in agent_rows}
+    selected_variant_ids = [value for value in form.get("variant_id", []) if value]
+    if selected_variant_ids:
+        available_variants = {row["id"]: row for row in repository.list_variants()}
+        variants: list[AgentVariant] = []
+        for variant_id in selected_variant_ids:
+            if variant_id not in available_variants:
+                raise ValueError(f"Variant 不存在：{variant_id}")
+            variant = AgentVariant.from_dict(available_variants[variant_id])
+            capability = capabilities.get(variant.agent_id)
+            if not capability or not capability.get("available"):
+                raise ValueError(f"Variant 使用的 Agent 当前不可用：{variant.agent_id}")
+            variants.append(variant)
+        baseline_id = first("baseline_variant_id")
+        candidate_id = first("candidate_variant_id")
+        if baseline_id or candidate_id:
+            if not baseline_id or not candidate_id or baseline_id == candidate_id:
+                raise ValueError("Baseline 与 Candidate 必须是两个不同的已选 Variant")
+            if baseline_id not in selected_variant_ids or candidate_id not in selected_variant_ids:
+                raise ValueError("Baseline / Candidate 必须来自已选 Variant")
+        elif len(selected_variant_ids) == 2:
+            baseline_id, candidate_id = selected_variant_ids
+        name = _slug(first("experiment_name", "variant-comparison"))
+        suite_id = _slug(first("suite_id", "variant-comparison"))
+        return (
+            ExperimentSpec(
+                id=f"{name}-{uuid.uuid4().hex[:8]}",
+                suite=SuiteSpec(suite_id, "coding", tuple(cases)),
+                variants=tuple(variants),
+                trials=max(1, int(first("trials", "1"))),
+                max_concurrency=max(1, int(first("max_concurrency", "1"))),
+                metadata={
+                    "created_from": "web_variant_library",
+                    "selected_case_paths": [str(path) for path in case_paths],
+                    "variant_ids": selected_variant_ids,
+                    "baseline_variant_id": baseline_id or None,
+                    "candidate_variant_id": candidate_id or None,
+                },
+            ),
+            None,
+        )
+
     selected_agents = form.get("agent_id", [])
     if not selected_agents:
         raise ValueError("至少选择一个可用 Agent")
-    capabilities = {row["agent"]["id"]: row["capabilities"] for row in agent_rows}
     variants = []
     custom_driver = None
     for agent_id in selected_agents:
@@ -695,7 +918,11 @@ def _build_experiment(
 def _variant_label(variant: dict[str, Any]) -> str:
     agent = variant.get("agent_id") or variant.get("id") or "Variant"
     model = variant.get("model") or "default"
-    label = f"{agent} / {('默认配置' if str(model).lower() in {'default', 'unknown'} else model)}"
+    display_name = variant.get("name") or agent
+    label = f"{display_name} / {agent} / {('默认配置' if str(model).lower() in {'default', 'unknown'} else model)}"
+    subject_revision = variant.get("subject_revision") or "UNKNOWN"
+    if str(subject_revision).upper() not in {"", "UNKNOWN"}:
+        label += f" / revision {subject_revision}"
     config = variant.get("harness_config") or {}
     if config.get("verification_gate") is True:
         label += " · verification_gate=on"

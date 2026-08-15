@@ -45,7 +45,11 @@ class Repository:
                 );
                 CREATE TABLE IF NOT EXISTS variants (
                     id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL DEFAULT '',
                     agent_id TEXT NOT NULL,
+                    executable TEXT NOT NULL DEFAULT '',
+                    subject_revision TEXT NOT NULL DEFAULT 'UNKNOWN',
+                    agent_version TEXT NOT NULL DEFAULT 'UNKNOWN',
                     model TEXT NOT NULL,
                     provider TEXT NOT NULL,
                     model_config_json TEXT NOT NULL,
@@ -129,6 +133,20 @@ class Repository:
                 "INSERT OR IGNORE INTO failure_runs(failure_id, run_id, first_seen_at) "
                 "SELECT id, source_run_id, created_at FROM failures"
             )
+            self._ensure_variant_columns(db)
+
+    @staticmethod
+    def _ensure_variant_columns(db: sqlite3.Connection) -> None:
+        existing = {row[1] for row in db.execute("PRAGMA table_info(variants)")}
+        columns = {
+            "name": "TEXT NOT NULL DEFAULT ''",
+            "executable": "TEXT NOT NULL DEFAULT ''",
+            "subject_revision": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+            "agent_version": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+        }
+        for name, definition in columns.items():
+            if name not in existing:
+                db.execute(f"ALTER TABLE variants ADD COLUMN {name} {definition}")
 
     def save_agent(self, agent: Agent) -> None:
         with self._connect() as db:
@@ -271,9 +289,17 @@ class Repository:
         with self._connect() as db:
             db.execute(
                 """
-                INSERT INTO variants VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO variants(
+                    id, name, agent_id, executable, subject_revision, agent_version,
+                    model, provider, model_config_json, harness_config_json,
+                    run_mode, observation_profile, fingerprint_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
+                  name=excluded.name,
                   agent_id=excluded.agent_id,
+                  executable=excluded.executable,
+                  subject_revision=excluded.subject_revision,
+                  agent_version=excluded.agent_version,
                   model=excluded.model,
                   provider=excluded.provider,
                   model_config_json=excluded.model_config_json,
@@ -284,7 +310,11 @@ class Repository:
                 """,
                 (
                     variant.id,
+                    variant.name,
                     variant.agent_id,
+                    variant.executable,
+                    variant.subject_revision,
+                    variant.agent_version,
                     variant.model,
                     variant.provider,
                     json.dumps(redact(variant.model_config), sort_keys=True),
@@ -300,6 +330,29 @@ class Repository:
                     ),
                 ),
             )
+
+    @staticmethod
+    def _decode_variant(result: dict[str, Any]) -> dict[str, Any]:
+        for key in ("model_config_json", "harness_config_json", "fingerprint_json"):
+            value = result.pop(key, None)
+            result[key.removesuffix("_json")] = json.loads(value) if value else {}
+        result.setdefault("name", "")
+        result.setdefault("executable", "")
+        result.setdefault("subject_revision", "UNKNOWN")
+        result.setdefault("agent_version", "UNKNOWN")
+        result["configured_model"] = result.get("model")
+        result["configured_provider"] = result.get("provider")
+        return result
+
+    def get_variant(self, variant_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM variants WHERE id=?", (variant_id,)).fetchone()
+        return self._decode_variant(dict(row)) if row else None
+
+    def list_variants(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = [dict(row) for row in db.execute("SELECT * FROM variants ORDER BY name, id")]
+        return [self._decode_variant(row) for row in rows]
 
     def save_case(self, case: CaseSpec) -> None:
         with self._connect() as db:

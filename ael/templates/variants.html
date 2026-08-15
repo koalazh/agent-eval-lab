@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero"><div><p class="eyebrow">实验室 / Variant</p><h1>Variant 库</h1><p class="home-lede">Variant 是被测 Agent / Harness 的可复用配置。Configured 与后续 Run 中实际 Observed 的值分开保存。</p></div><a class="button" href="/variants/new">创建 Variant</a></section>
+
+<section class="card">
+  <div class="section-heading"><div><p class="eyebrow">可复用被测对象</p><h2>多个 Variant 可以属于同一个 Agent</h2></div><span class="pill neutral">{{ variants|length }} 个 Variant</span></div>
+  <div class="case-catalog-grid">
+    {% for variant in variants %}
+    <article class="agent-builder-card {% if not variant.available %}is-disabled{% endif %}">
+      <div class="agent-builder-head"><div><p class="eyebrow">{{ variant.agent_display_name }}</p><h3>{{ variant.name or variant.id }}</h3></div><span class="pill {% if variant.available %}pill-success{% else %}pill-warning{% endif %}">{{ "可用" if variant.available else "Agent 不可用" }}</span></div>
+      <p class="muted"><code>{{ variant.id }}</code> · executable <code>{{ variant.executable or "UNKNOWN" }}</code></p>
+      <dl class="detail-list">
+        <div><dt>Subject revision</dt><dd><code>{{ variant.subject_revision or "UNKNOWN" }}</code></dd></div>
+        <div><dt>Agent version</dt><dd>{{ variant.agent_version or "UNKNOWN" }}</dd></div>
+        <div><dt>Configured model / provider</dt><dd>{{ variant.model or "UNKNOWN" }} / {{ variant.provider or "UNKNOWN" }}</dd></div>
+        <div><dt>运行模式</dt><dd>{{ variant.run_mode }} · {{ variant.observation_profile }}</dd></div>
+      </dl>
+      <div class="case-card-actions"><a href="/variants/{{ variant.id }}/edit">编辑</a><form method="post" action="/variants/{{ variant.id }}/duplicate"><button class="button secondary" type="submit">Duplicate</button></form><a href="/experiments/new">用于实验</a></div>
+    </article>
+    {% else %}
+    <div class="empty-state"><strong>还没有持久 Variant</strong><p>先创建一个 Variant，再 Duplicate 并修改 subject revision 或其他真实配置。</p><a class="button" href="/variants/new">创建第一个 Variant</a></div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

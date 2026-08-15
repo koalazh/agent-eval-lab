@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="builder-hero"><p class="eyebrow">实验室 / Variant</p><h1>{{ "创建 Variant" if mode == "create" else "编辑 Variant" }}</h1><p class="home-lede">记录真实被测 Agent / Harness 的版本与配置。Subject revision 是被测对象版本，不是 AEL 自己的 Git SHA。</p><div class="builder-steps"><span class="active"><b>1</b>定义被测对象</span><i>→</i><span><b>2</b>用于实验</span></div></section>
+{% if error %}<section class="error"><strong>无法保存：</strong> {{ error }}</section>{% endif %}
+<form method="post" action="{% if mode == 'create' %}/variants/new{% else %}/variants/{{ variant.id }}{% endif %}" class="card">
+  <div class="section-heading"><div><p class="eyebrow">持久配置</p><h2>Variant identity</h2></div><a class="button secondary" href="/variants">返回 Variant 库</a></div>
+  <div class="builder-strategy-grid">
+    <label>Variant name<input name="name" value="{{ form.get('name', [variant.get('name', '')])[-1] }}" required placeholder="Minimal Harness / revision def"></label>
+    <label>Agent / driver<select name="agent_id" required>{% for row in agents %}<option value="{{ row.agent.id }}" {% if form.get('agent_id', [variant.get('agent_id', '')])[-1] == row.agent.id %}selected{% endif %}>{{ row.agent.display_name }}{% if not row.capabilities.available %}（当前不可用）{% endif %}</option>{% endfor %}</select></label>
+    <label>Executable<input name="executable" value="{{ form.get('executable', [variant.get('executable', '')])[-1] }}" required placeholder="/usr/local/bin/claude"></label>
+    <label>Subject revision<input name="subject_revision" value="{{ form.get('subject_revision', [variant.get('subject_revision', 'UNKNOWN')])[-1] }}" required placeholder="git:abc123 / binary:0.21.0 / custom:user-label"></label>
+    <label>Agent version<input name="agent_version" value="{{ form.get('agent_version', [variant.get('agent_version', '')])[-1] }}" placeholder="由 Agent / driver 记录"></label>
+    <label>Configured model<input name="model" value="{{ form.get('model', [variant.get('model', 'default')])[-1] }}" required></label>
+    <label>Configured provider<input name="provider" value="{{ form.get('provider', [variant.get('provider', 'default')])[-1] }}" required></label>
+    <label>运行模式<select name="run_mode"><option value="native" {% if form.get('run_mode', [variant.get('run_mode', 'native')])[-1] == 'native' %}selected{% endif %}>native</option><option value="controlled" {% if form.get('run_mode', [variant.get('run_mode', 'native')])[-1] == 'controlled' %}selected{% endif %}>controlled</option></select></label>
+    <label>观察配置<select name="observation_profile"><option value="minimal" {% if form.get('observation_profile', [variant.get('observation_profile', 'minimal')])[-1] == 'minimal' %}selected{% endif %}>minimal</option><option value="telemetry" {% if form.get('observation_profile', [variant.get('observation_profile', 'minimal')])[-1] == 'telemetry' %}selected{% endif %}>telemetry</option><option value="deep" {% if form.get('observation_profile', [variant.get('observation_profile', 'minimal')])[-1] == 'deep' %}selected{% endif %}>deep</option></select></label>
+  </div>
+  <div class="two-col">
+    <label>Model config（JSON）<textarea name="model_config" rows="5" placeholder='{"temperature": 0}'>{% if form.get('model_config') %}{{ form.get('model_config')[-1] }}{% elif variant.get('model_config') %}{{ variant.get('model_config')|tojson }}{% endif %}</textarea></label>
+    <label>Harness config（JSON）<textarea name="harness_config" rows="5" placeholder='{"memory": false}'>{% if form.get('harness_config') %}{{ form.get('harness_config')[-1] }}{% elif variant.get('harness_config') %}{{ variant.get('harness_config')|tojson }}{% endif %}</textarea></label>
+  </div>
+  <div class="form-actions"><a class="button secondary" href="/variants">取消</a><button type="submit">保存 Variant</button></div>
+</form>
+{% if mode == "edit" %}<form method="post" action="/variants/{{ variant.id }}/duplicate" class="card"><div class="section-heading"><div><p class="eyebrow">复用</p><h2>Duplicate this Variant</h2></div><button class="button secondary" type="submit">Duplicate 后编辑</button></div><p class="muted">Duplicate 会生成新的持久 Variant ID；编辑副本不会改变已经创建的 Experiment snapshot。</p></form>{% endif %}
+{% endblock %}

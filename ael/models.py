@@ -92,6 +92,10 @@ class Agent:
 class AgentVariant:
     id: str
     agent_id: str
+    name: str = ""
+    executable: str = ""
+    subject_revision: str = "UNKNOWN"
+    agent_version: str = "UNKNOWN"
     model: str = "UNKNOWN"
     provider: str = "UNKNOWN"
     model_config: Mapping[str, Any] = field(default_factory=dict)
@@ -99,12 +103,35 @@ class AgentVariant:
     run_mode: RunMode = RunMode.NATIVE
     observation_profile: ObservationProfile = ObservationProfile.MINIMAL
 
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "AgentVariant":
+        return cls(
+            id=str(raw.get("id") or raw.get("variant_id") or "variant"),
+            agent_id=str(raw.get("agent_id") or raw.get("agent") or ""),
+            name=str(raw.get("name") or ""),
+            executable=str(raw.get("executable") or ""),
+            subject_revision=str(raw.get("subject_revision") or "UNKNOWN"),
+            agent_version=str(raw.get("agent_version") or "UNKNOWN"),
+            model=str(raw.get("model") or raw.get("configured_model") or "UNKNOWN"),
+            provider=str(raw.get("provider") or raw.get("configured_provider") or "UNKNOWN"),
+            model_config=dict(raw.get("model_config") or {}),
+            harness_config=dict(raw.get("harness_config") or raw.get("config") or {}),
+            run_mode=RunMode(str(raw.get("run_mode") or "native")),
+            observation_profile=ObservationProfile(str(raw.get("observation_profile") or "minimal")),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "agent_id": self.agent_id,
+            "name": self.name,
+            "executable": self.executable,
+            "subject_revision": self.subject_revision,
+            "agent_version": self.agent_version,
             "model": self.model,
+            "configured_model": self.model,
             "provider": self.provider,
+            "configured_provider": self.provider,
             "model_config": dict(self.model_config),
             "harness_config": dict(self.harness_config),
             "run_mode": self.run_mode.value,
@@ -180,4 +207,3 @@ class ProcessResult:
     timed_out: bool = False
     cancelled: bool = False
     error: str | None = None
-
