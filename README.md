@@ -173,7 +173,7 @@ Agent 没有发出 trace span，页面会明确显示“未收到真实 span”�
 
 ## 产品边界
 
-AEL 聚焦于矩阵执行、差异比较、证据融合、失败调查、失败到实验和失败到回归。它不是分布式运行器、Agent runtime、通用插件框架、OTel backend 或云服务。
+AEL 聚焦于 Variant、Case、Experiment、Run 的矩阵执行、差异比较和证据融合。失败模式只作为当前 Run 的诊断投影；它不是分布式运行器、Agent runtime、通用插件框架、OTel backend 或云服务。
 
 ## 差异证据
 
@@ -181,11 +181,11 @@ Explicit Contrast 会先检查 Case 版本，再使用 Experiment 的 Baseline/C
 
 Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。后续实验构建器会在同一 Case 版本上生成可编辑的 Baseline / Candidate 两个 Variant，明确改变 `prompt intervention`、`run_mode` 或 Agent 后再运行，不需要用户离开 AEL 修改 YAML。
 
-## 失败记录簿（Failure Book）
+## 失败模式（诊断投影）
 
-只有进程已完成且 verifier 返回 FAIL 的记录才会进入失败记录簿，并以 `OBSERVED` 开始；相同 Case revision 和 verifier signature 的重复失败会归并到同一 Failure Pattern，关联多个 Run，并在重复出现后变为 `REPRODUCED`。
+只有进程已完成且 verifier 返回 FAIL 的记录才会进入失败模式投影，并以 `OBSERVED` 开始；相同 Case revision 和 verifier signature 的重复失败会归并到同一 Failure Pattern，关联多个 Run。这个兼容性视图用于调查当前证据，不是长期 Failure Issue Tracker。
 
-Failure lifecycle 不是长期产品中心。`FIXED` / `REGRESSED` 只由同一 Case revision 上具有区分力的
+长期资产是人工确认的 Case / CaseRevision。`FIXED` / `REGRESSED` 只由同一 Case revision 上具有区分力的
 Baseline / Candidate Experiment 推导；如果历史失败没有在 Baseline 中重现，即使 Candidate 全部通过，
 结果也保持 `INCONCLUSIVE`。Regression Suite 只保存经过确认的 `case_id + revision`，不会复制 fixture。
 

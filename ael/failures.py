@@ -169,5 +169,5 @@ def build_regression_experiment(
         variants=variants,
         trials=max(1, trials),
         max_concurrency=max(1, max_concurrency),
-        metadata={"source": "Failure Book regression suite"},
+        metadata={"source": "Case Corpus regression suite"},
     )
