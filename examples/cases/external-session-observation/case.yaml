@@ -1,0 +1,8 @@
+id: external-session-observation
+prompt: Inspect the working directory and report the files you observe.
+fixture:
+  path: fixture
+verify:
+  command: test -f answer.txt
+limits:
+  timeout_seconds: 60

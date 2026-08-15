@@ -23,6 +23,7 @@ from .redaction import redact
 
 _SESSION_KEYS = ("session.id", "session_id")
 _CWD_KEYS = ("cwd", "working_directory", "project.cwd", "project.path", "project")
+_PATH_KEYS = {"path", "filepath", "file_path", "filename", "file_name"}
 
 
 def _value(attrs: dict[str, Any], keys: tuple[str, ...]) -> str | None:
@@ -64,6 +65,23 @@ def _metric_value(record: dict[str, Any]) -> Any:
     return None
 
 
+def _explicit_paths(value: Any, *, key: str = "") -> list[str]:
+    normalized = key.lower().replace("-", "_")
+    if normalized in _PATH_KEYS and isinstance(value, str) and value.strip():
+        return [value.strip()]
+    if isinstance(value, dict):
+        result: list[str] = []
+        for child_key, child_value in value.items():
+            result.extend(_explicit_paths(child_value, key=str(child_key)))
+        return result
+    if isinstance(value, list):
+        result: list[str] = []
+        for child_value in value:
+            result.extend(_explicit_paths(child_value, key=key))
+        return result
+    return []
+
+
 @dataclass
 class _SessionAccumulator:
     vendor_session_id: str
@@ -76,6 +94,9 @@ class _SessionAccumulator:
     agent: str = "UNKNOWN"
     agent_version: str = "UNKNOWN"
     cwd: str = "UNKNOWN"
+    prompt: str = "UNKNOWN"
+    models: set[str] = field(default_factory=set)
+    relevant_files: set[str] = field(default_factory=set)
 
     def add(
         self,
@@ -112,6 +133,19 @@ class _SessionAccumulator:
             self.agent = str(source.get("service.name") or self.agent)
             self.agent_version = str(source.get("service.version") or self.agent_version)
             self.cwd = _value(source, _CWD_KEYS) or self.cwd
+            model = source.get("model")
+            if model:
+                self.models.add(str(model))
+            self.relevant_files.update(_explicit_paths(source))
+        event_name = str(attrs.get("event.name") or "").lower()
+        if event_name == "user_prompt":
+            prompt = str(attrs.get("prompt") or "").strip()
+            if prompt and prompt != "<REDACTED>":
+                self.prompt = str(redact(prompt))
+        model = attrs.get("model")
+        if model and str(model).lower() not in {"unknown", "none"}:
+            self.models.add(str(model))
+        self.relevant_files.update(_explicit_paths(attrs))
         timestamp = _timestamp_value(record, attrs)
         if timestamp:
             self.timestamps.append(timestamp)
@@ -145,6 +179,9 @@ class _SessionAccumulator:
             "started_at": started_at,
             "ended_at": ended_at,
             "cwd": self.cwd,
+            "prompt": self.prompt,
+            "models": sorted(self.models),
+            "relevant_files": sorted(self.relevant_files),
             "origin": origin,
             "managed": bool(run_id),
             "managed_run_id": run_id,

@@ -139,6 +139,12 @@ Session 只回链到已有 Run，不重复成为另一条实验记录。
 terminal 在临时目录直接执行 \`claude\` 产生，没有经过 AEL Runner；Collector 收到 36 条 OTel log、
 7 条 OTel metric、0 个 trace span，Sessions 页面显示 \`UNVERIFIED\` 和 OTel Event Timeline。
 
+从这个 Session 点击 \`Create Case\` 后，人工确认了 Case name、prompt、fixture snapshot
+\`/tmp/ael-external-session.B7u8B1\` 和 verifier \`test -f answer.txt\`，生成可执行 CaseRevision
+\`external-session-observation@f578f3b25d8c\`。它随后进入正常 Experiment
+\`external-session-case-proof-0c4bda59\`，1 个真实 Claude Run 完成并由独立 verifier 判定 PASS；
+fixture 被复制到 \`examples/cases/external-session-observation/fixture\`，没有自动生成或自动声明任务结果。
+
 AEL 遵循 OpenTelemetry 的 signal 边界：log、metric 和 trace span 不互相冒充。当前 Claude Code
 真实 Run 已经完成 OTLP → Collector → 持久化 → `ael.run.id` 关联，并能看到真实 logs/metrics；如果
 Agent 没有发出 trace span，页面会明确显示“未收到真实 span”，而不会为了视觉效果伪造父子 span。

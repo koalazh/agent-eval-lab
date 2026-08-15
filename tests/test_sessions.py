@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from ael.sessions import discover_sessions
+from ael.persistence import Repository
 from ael.web import create_app
 
 
@@ -181,3 +182,38 @@ def test_external_session_uses_the_same_evidence_page_and_boundary(tmp_path: Pat
     assert "session.id" in detail.text
     assert "OTel Trace Waterfall" in detail.text
     assert "Case Verifier" in detail.text
+
+
+def test_real_session_can_become_a_user_confirmed_case_revision(tmp_path: Path):
+    _write_collector(tmp_path)
+    fixture = tmp_path / "confirmed-fixture"
+    fixture.mkdir()
+    (fixture / "answer.txt").write_text("expected\n", encoding="utf-8")
+    client = TestClient(create_app(tmp_path))
+
+    form = client.get("/sessions/external-session-1/case/new")
+    assert form.status_code == 200
+    assert "Create CaseRevision" in form.text
+    response = client.post(
+        "/sessions/external-session-1/case/new",
+        data={
+            "source_session_id": "external-session-1",
+            "case_id": "confirmed-session-case",
+            "display_name": "Confirmed Session Case",
+            "prompt": "Make answer.txt contain expected.",
+            "fixture_source": str(fixture),
+            "relevant_files": "answer.txt",
+            "verifier_command": 'test "$(cat answer.txt)" = expected',
+            "timeout_seconds": "30",
+            "notes": "human confirmed",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    case_root = tmp_path / "examples" / "cases" / "confirmed-session-case"
+    assert (case_root / "fixture" / "answer.txt").read_text() == "expected\n"
+    assert "verify:" in (case_root / "case.yaml").read_text()
+    assert "Confirmed Session Case" in client.get("/cases/confirmed-session-case").text
+    assert "confirmed-session-case" in client.get("/experiments/new").text
+    assert Repository(tmp_path).list_experiments() == []

@@ -239,6 +239,17 @@
     .linked-session-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 11px 13px; border: 1px solid #e0e7ec; border-radius: 8px; background: #f8fafc; font-size: 12px; }
     .linked-session-row span { color: #596874; }
     .linked-session-row a { margin-left: auto; color: #246bce; font-weight: 700; text-decoration: none; }
+    .session-source-section, .case-creation-section { padding: 24px; }
+    .session-source-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, 1fr); gap: 16px; margin-top: 16px; }
+    .session-source-note, .case-confirmation-warning { padding: 15px; border: 1px solid #cfe0f0; border-radius: 9px; color: #52616d; background: #f5faff; line-height: 1.55; }
+    .session-source-note strong, .case-confirmation-warning strong { color: #263541; }
+    .session-source-note p, .case-confirmation-warning p { margin: 7px 0 0; }
+    .session-case-form { display: grid; gap: 13px; max-width: 900px; }
+    .session-case-form label { display: grid; gap: 6px; color: #52616d; font-size: 12px; font-weight: 750; }
+    .session-case-form label small { color: #75838e; font-size: 11px; font-weight: 400; line-height: 1.45; }
+    .session-case-form input, .session-case-form textarea { margin: 0; color: #263541; font-family: inherit; font-size: 13px; font-weight: 400; }
+    .session-case-form input[readonly] { color: #697884; background: #f1f4f6; }
+    .case-confirmation-warning { border-color: #ead7a7; color: #72531e; background: #fffaf0; }
     .case-catalog-card.is-archived { opacity: .74; background: #f8fafb; }
     .case-catalog-card.is-archived h3 { text-decoration: line-through; text-decoration-color: #b6c0c7; }
     .case-catalog-note { min-height: 0 !important; margin: 10px 0 0; padding: 8px 10px; border-radius: 7px; color: #52616d !important; background: #f3f6f8; font-size: 12px; }
@@ -498,6 +509,7 @@
       .experiment-card-grid, .agent-catalog-grid, .case-catalog-grid, .failure-card-grid, .focus-grid, .session-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .case-group-grid, .agent-builder-grid, .comparison-preview-columns { grid-template-columns: 1fr; }
       .telemetry-lower { grid-template-columns: 1fr; }
+      .session-source-grid { grid-template-columns: 1fr; }
       .evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .trace-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .trace-filter-search { grid-column: 1 / -1; }
@@ -531,6 +543,7 @@
       .failure-filter-bar { grid-template-columns: 1fr; }
       .failure-filter-bar button { grid-column: auto; justify-self: stretch; }
       .comparison-filter-grid { grid-template-columns: 1fr; }
+      .session-source-grid { grid-template-columns: 1fr; }
       .comparison-filter-reset { grid-column: auto; justify-self: stretch; }
       .metric-pivot-table { min-width: 600px; }
       .metric-pivot-table thead th:first-child, .metric-pivot-table tbody th { width: 150px; min-width: 150px; }

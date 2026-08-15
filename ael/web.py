@@ -14,6 +14,7 @@ from urllib.parse import parse_qs
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+import yaml
 
 from .agents import builtin_real_drivers, probe_registry
 from .cases import ExperimentSpec, SuiteSpec, discover_case_paths, load_case
@@ -220,6 +221,46 @@ def create_app(root: str | Path = ".") -> FastAPI:
             native_raw="",
             visible_changed_files=[],
         )
+
+    @app.get("/sessions/{session_id}/case/new", response_class=HTMLResponse)
+    async def new_session_case_page(request: Request, session_id: str):
+        session = get_session(repository.root, session_id, repository.list_runs())
+        if not session:
+            return HTMLResponse("未找到 Session", status_code=404)
+        return render(
+            request,
+            "session_case_form.html",
+            title="从 Session 创建 Case",
+            session=session,
+            draft=_session_case_draft(session),
+            form={},
+            error=None,
+        )
+
+    @app.post("/sessions/{session_id}/case/new", response_class=HTMLResponse)
+    async def create_session_case_page(request: Request, session_id: str):
+        session = get_session(repository.root, session_id, repository.list_runs())
+        if not session:
+            return HTMLResponse("未找到 Session", status_code=404)
+        form = {
+            key: values
+            for key, values in parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True).items()
+        }
+        draft = _session_case_draft(session)
+        try:
+            case = _create_case_from_session(repository, session, form)
+        except (OSError, TypeError, ValueError) as exc:
+            return render(
+                request,
+                "session_case_form.html",
+                title="从 Session 创建 Case",
+                session=session,
+                draft=draft,
+                form=form,
+                error=str(exc),
+                _status_code=400,
+            )
+        return RedirectResponse(f"/cases/{case.id}", status_code=303)
 
     @app.get("/variants", response_class=HTMLResponse)
     async def variants_page(request: Request):
@@ -728,6 +769,94 @@ def _session_evidence(session: dict[str, Any]) -> dict[str, Any]:
         "trajectory_steps": build_trajectory(otel_events, [], verifier={}, changed_files=[]),
         "file_activity": build_file_activity([], otel_events, [], run_id=session["vendor_session_id"]),
     }
+
+
+def _session_case_draft(session: dict[str, Any]) -> dict[str, Any]:
+    session_id = str(session.get("vendor_session_id") or "session")
+    models = session.get("models") or []
+    return {
+        "case_id": _slug(f"session-{session_id[:8]}"),
+        "display_name": f"{session.get('agent') or 'Agent'} Session Case",
+        "prompt": session.get("prompt") if session.get("prompt") not in {None, "UNKNOWN"} else "",
+        "fixture_source": session.get("cwd") if session.get("cwd") not in {None, "UNKNOWN"} else "",
+        "relevant_files": ", ".join(session.get("relevant_files") or []),
+        "agent_model": f"{session.get('agent') or 'UNKNOWN'} / {', '.join(models) or 'UNKNOWN'}",
+        "verifier_command": "",
+        "timeout_seconds": "600",
+        "notes": f"Source Session: {session_id}",
+    }
+
+
+def _create_case_from_session(
+    repository: Repository,
+    session: dict[str, Any],
+    form: dict[str, list[str]],
+):
+    def first(name: str, default: str = "") -> str:
+        return (form.get(name) or [default])[-1].strip()
+
+    case_id = _slug(first("case_id"))
+    display_name = first("display_name")
+    prompt = first("prompt")
+    fixture_source_value = first("fixture_source")
+    verifier_command = first("verifier_command")
+    if not case_id:
+        raise ValueError("必须填写 Case ID")
+    if case_id == "verify-answer-001":
+        raise ValueError("旧 smoke Case 不属于 Session 沉淀路径")
+    if not display_name:
+        raise ValueError("必须人工确认 Case name")
+    if not prompt:
+        raise ValueError("必须人工确认可复现的 prompt")
+    if not fixture_source_value:
+        raise ValueError("必须人工确认 fixture snapshot 路径")
+    if not verifier_command:
+        raise ValueError("必须人工确认 verifier command；AEL 不会自动生成")
+    try:
+        timeout_seconds = max(1, int(first("timeout_seconds", "600") or "600"))
+    except ValueError as exc:
+        raise ValueError("timeout_seconds 必须是正整数") from exc
+
+    existing_ids = {item["id"] for item in _case_catalog(repository, include_archived=True)}
+    case_root = (repository.root / "examples" / "cases" / case_id).resolve()
+    if case_id in existing_ids or case_root.exists():
+        raise ValueError(f"Case 已存在：{case_id}；请使用新的 Case ID")
+    fixture_source = Path(fixture_source_value).expanduser().resolve()
+    if not fixture_source.is_dir():
+        raise ValueError(f"fixture snapshot 必须是可读目录：{fixture_source_value}")
+    if fixture_source == repository.root or _is_within(fixture_source, case_root):
+        raise ValueError("fixture snapshot 不能包含即将创建的 Case 目录；请选择明确的 fixture 目录")
+
+    case_root.mkdir(parents=True)
+    shutil.copytree(fixture_source, case_root / "fixture")
+    case_path = case_root / "case.yaml"
+    case_path.write_text(
+        yaml.safe_dump(
+            {
+                "id": case_id,
+                "prompt": prompt,
+                "fixture": {"path": "fixture"},
+                "verify": {"command": verifier_command},
+                "limits": {"timeout_seconds": timeout_seconds},
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    case = load_case(case_path)
+    source_session = str(session.get("vendor_session_id") or "UNKNOWN")
+    notes = first("notes") or f"Source Session: {source_session}"
+    notes = f"{notes} · source_session={source_session} · verifier and fixture confirmed by user"
+    repository.save_case(case)
+    repository.save_case_catalog(
+        case.id,
+        source_path=str(case_path),
+        display_name=display_name,
+        notes=notes,
+        status="ACTIVE",
+    )
+    return case
 
 
 def _variant_rows(repository: Repository, agent_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

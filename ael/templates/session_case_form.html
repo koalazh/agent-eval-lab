@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% set case_id_value = (form.get("case_id") or [draft.case_id])[-1] %}
+{% set display_name_value = (form.get("display_name") or [draft.display_name])[-1] %}
+{% set prompt_value = (form.get("prompt") or [draft.prompt])[-1] %}
+{% set fixture_source_value = (form.get("fixture_source") or [draft.fixture_source])[-1] %}
+{% set relevant_files_value = (form.get("relevant_files") or [draft.relevant_files])[-1] %}
+{% set verifier_command_value = (form.get("verifier_command") or [draft.verifier_command])[-1] %}
+{% set timeout_value = (form.get("timeout_seconds") or [draft.timeout_seconds])[-1] %}
+{% set notes_value = (form.get("notes") or [draft.notes])[-1] %}
+{% block content %}
+<section class="setup-hero">
+  <div>
+    <p class="eyebrow">Session → Case</p>
+    <h1>从真实 Session 沉淀 Case</h1>
+    <p class="home-lede">这一步只创建一个用户确认过的 CaseRevision。AEL 可以预填证据，但不会自动生成 fixture、verifier 或 Experiment。</p>
+  </div>
+  <div class="hero-actions"><a class="button secondary" href="/sessions/{{ session.vendor_session_id }}">返回 Session</a><a class="button secondary" href="/cases">Case 管理</a></div>
+</section>
+
+{% if error %}<section class="error"><strong>无法创建 Case</strong><p>{{ error }}</p></section>{% endif %}
+
+<section class="session-source-section">
+  <div class="section-heading"><div><p class="eyebrow">来源证据</p><h2>Session context</h2></div><span class="pill session-unverified">UNVERIFIED</span></div>
+  <div class="session-source-grid">
+    <dl class="detail-list">
+      <div><dt>vendor session</dt><dd><code>{{ session.vendor_session_id }}</code></dd></div>
+      <div><dt>agent</dt><dd>{{ session.agent }} · {{ session.agent_version }}</dd></div>
+      <div><dt>model</dt><dd>{{ session.models|join(", ") or "UNKNOWN" }}</dd></div>
+      <div><dt>cwd / project</dt><dd>{{ session.cwd }}</dd></div>
+      <div><dt>evidence</dt><dd>{{ session.evidence_ref }}</dd></div>
+    </dl>
+    <div class="session-source-note"><strong>人工确认边界</strong><p>Session 只能提供行为线索。Case name、prompt、fixture snapshot 和 verifier 必须由你明确确认，提交后才会生成可运行版本。</p></div>
+  </div>
+</section>
+
+<section class="case-creation-section">
+  <div class="section-heading"><div><p class="eyebrow">Human confirmation</p><h2>确认 CaseRevision</h2></div><span class="muted">所有带 * 字段必填</span></div>
+  <form class="session-case-form" method="post" action="/sessions/{{ session.vendor_session_id }}/case/new">
+    <input type="hidden" name="source_session_id" value="{{ session.vendor_session_id }}">
+    <div class="two-col">
+      <label>Case ID *<input name="case_id" value="{{ case_id_value }}" required></label>
+      <label>Case name *<input name="display_name" value="{{ display_name_value }}" required></label>
+    </div>
+    <label>可复现 prompt *<textarea name="prompt" rows="5" required placeholder="描述 Agent 在这个 Case 中需要完成什么">{{ prompt_value }}</textarea></label>
+    <label>fixture snapshot 目录 *<input name="fixture_source" value="{{ fixture_source_value }}" required placeholder="/absolute/path/to/fixture-directory"><small>提交后会复制到当前工作区的 <code>examples/cases/&lt;case-id&gt;/fixture</code>；不会引用外部目录作为运行时 fixture。</small></label>
+    <label>相关文件（线索，可修改）<textarea name="relevant_files" rows="2">{{ relevant_files_value }}</textarea></label>
+    <label>Verifier command *<input name="verifier_command" value="{{ verifier_command_value }}" required placeholder='例如：test "$(cat answer.txt)" = expected'><small>必须由用户提供；AEL 不从 Agent 自述或 Session 事件自动生成 verifier。</small></label>
+    <div class="two-col">
+      <label>Timeout seconds<input type="number" name="timeout_seconds" min="1" value="{{ timeout_value }}"></label>
+      <label>Source agent / model<input value="{{ draft.agent_model }}" readonly></label>
+    </div>
+    <label>备注<textarea name="notes" rows="3">{{ notes_value }}</textarea></label>
+    <div class="case-confirmation-warning"><strong>提交后会发生什么</strong><p>创建 Case 目录、复制 fixture、写入 case.yaml，并登记一个新的不可变 revision；不会自动运行 Agent、不会自动加入 Experiment，也不会声明任务结果。</p></div>
+    <div class="form-actions"><button type="submit">Create CaseRevision</button><a class="button secondary" href="/sessions/{{ session.vendor_session_id }}">取消</a></div>
+  </form>
+</section>
+{% endblock %}
