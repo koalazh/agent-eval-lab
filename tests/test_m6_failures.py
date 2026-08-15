@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ael.cases import load_experiment
+from ael.cases import ExperimentSpec, SuiteSpec, load_experiment
 from ael.drivers.fake import FakeAgentDriver
 from ael.failures import build_regression_experiment, promote_failure
 from ael.models import AgentVariant
@@ -105,3 +105,45 @@ async def test_repeated_verifier_failure_is_clustered_and_reproduced(tmp_path):
     assert len(failures) == 1
     assert failures[0]["status"] == "REPRODUCED"
     assert failures[0]["details"]["run_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_follow_up_requires_discriminating_baseline_and_candidate(tmp_path):
+    repo = Repository(tmp_path)
+    source_experiment = load_experiment(write_experiment(tmp_path))
+    runner = Runner(repo, {"fake-fail": FakeAgentDriver("fake-fail", "fail"), "fake-pass": FakeAgentDriver("fake-pass", "pass")})
+    source_run = (await runner.run_experiment(source_experiment))[0]
+
+    candidate_only = ExperimentSpec(
+        id="candidate-only",
+        suite=source_experiment.suite,
+        variants=(AgentVariant(id="candidate-only", agent_id="fake-pass", model="test", harness_config={"fake_behavior": "pass"}),),
+        metadata={
+            "follow_up_of_run": source_run["run_id"],
+            "baseline_variant_id": "missing-baseline",
+            "candidate_variant_id": "candidate-only",
+        },
+    )
+    await runner.run_experiment(candidate_only)
+    assert repo.get_failure(source_run["failure_id"])["status"] == "OBSERVED"
+
+    discriminating = ExperimentSpec(
+        id="discriminating-follow-up",
+        suite=SuiteSpec(source_experiment.suite.id, source_experiment.suite.kind, source_experiment.suite.cases),
+        variants=(
+            AgentVariant(id="baseline", agent_id="fake-fail", model="test", harness_config={"fake_behavior": "fail"}),
+            AgentVariant(id="candidate", agent_id="fake-pass", model="test", harness_config={"fake_behavior": "pass"}),
+        ),
+        metadata={
+            "follow_up_of_run": source_run["run_id"],
+            "baseline_variant_id": "baseline",
+            "candidate_variant_id": "candidate",
+        },
+    )
+    await runner.run_experiment(discriminating)
+
+    failure = repo.get_failure(source_run["failure_id"])
+    assert failure["status"] == "FIXED"
+    assert failure["details"]["baseline_outcomes"] == ["FAIL"]
+    assert failure["details"]["candidate_outcomes"] == ["PASS"]
+    assert failure["details"]["discriminating_experiment"] is True

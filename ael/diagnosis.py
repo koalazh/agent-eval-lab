@@ -45,7 +45,7 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
         evidence.append("候选 workspace 没有观察到文件变化。")
     if details.get("matched_reference"):
         reference_id = details["matched_reference"]["run_id"]
-        evidence.append(f"匹配的 PASS 参考：{reference_id}。")
+        evidence.append(f"用户明确选择的 Reference：{reference_id}。")
         scope = details.get("variable_scope") or {}
         if scope.get("changed"):
             evidence.append(f"已记录的变化变量：{_display_values(scope['changed'])}。")
@@ -62,7 +62,7 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
                     f"参考 verifier={reference_summary.get('outcome', 'UNKNOWN')}。"
                 )
     else:
-        unknowns.append("没有足够接近且 revision 相同的 PASS reference。")
+        unknowns.append("没有用户明确选择且 revision 相同的 Reference。")
     divergence = details.get("first_meaningful_divergence", {})
     if divergence.get("status") == "DIVERGENCE":
         left = divergence.get("candidate") or {}
@@ -115,13 +115,13 @@ def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any
         unknowns.append("候选没有已关联的 OTel 记录。")
     if divergence.get("status") == "VERIFIER_BOUNDARY" or divergence.get("reason") == "verifier outcome differs":
         hypothesis_text = (
-            "候选与 PASS 参考的任务真值不同；当前可确认的是 verifier 边界差异，"
+            "候选与明确 Reference 的任务真值不同；当前可确认的是 verifier 边界差异，"
             "但没有可靠的行为组分歧。产物 / verifier 输出可用于提出下一次实验，"
             "不能单独证明因果。"
         )
     elif divergence.get("status") == "DIVERGENCE":
         hypothesis_text = (
-            "候选与 PASS 参考在可观察行为组上不同；这与完成 / 修复 "
+            "候选与明确 Reference 在可观察行为组上不同；这与完成 / 修复 "
             "路径差异一致，但当前证据不能证明单一因果。"
         )
     else:
@@ -235,7 +235,7 @@ def create_follow_up_experiment(
     repository: Repository,
     run_id: str,
     *,
-    independent_variable: str = "verification_gate",
+    independent_variable: str = "run_mode",
     candidate_agent_id: str | None = None,
     trials: int | None = None,
     max_concurrency: int | None = None,
@@ -261,8 +261,8 @@ def create_follow_up_experiment(
     if not source_raw:
         raise ValueError("源 Variant 不在原 experiment definition 中")
     source_variant = _variant_from_definition(source_raw)
-    if independent_variable not in {"verification_gate", "run_mode", "agent"}:
-        raise ValueError("当前 Follow-up Builder 只支持 verification_gate、run_mode 或 Agent")
+    if independent_variable not in {"prompt_intervention", "run_mode", "agent"}:
+        raise ValueError("当前 Follow-up Builder 只支持 prompt intervention、run_mode 或 Agent")
     if independent_variable == "agent":
         if not candidate_agent_id:
             raise ValueError("Agent 消融必须选择 candidate Agent")
@@ -273,16 +273,20 @@ def create_follow_up_experiment(
     candidate_config = dict(source_variant.harness_config)
     baseline_mode = source_variant.run_mode
     candidate_mode = source_variant.run_mode
-    if independent_variable == "verification_gate":
-        baseline_config["verification_gate"] = False
-        candidate_config["verification_gate"] = True
+    if independent_variable == "prompt_intervention":
+        baseline_config["prompt_intervention"] = False
+        candidate_config["prompt_intervention"] = True
     elif independent_variable == "run_mode":
         candidate_mode = _toggle_run_mode(source_variant.run_mode)
     baseline_id = f"baseline-{run_id[:8]}"
     candidate_id = f"candidate-{run_id[:8]}"
     baseline = AgentVariant(
         id=baseline_id,
+        name=f"Baseline · {source_variant.name or source_variant.id}",
         agent_id=source_variant.agent_id,
+        executable=source_variant.executable,
+        subject_revision=source_variant.subject_revision,
+        agent_version=source_variant.agent_version,
         model=source_variant.model,
         provider=source_variant.provider,
         model_config=source_variant.model_config,
@@ -292,7 +296,11 @@ def create_follow_up_experiment(
     )
     candidate = AgentVariant(
         id=candidate_id,
+        name=f"Candidate · {source_variant.name or source_variant.id}",
         agent_id=candidate_agent,
+        executable=source_variant.executable,
+        subject_revision=source_variant.subject_revision,
+        agent_version=source_variant.agent_version,
         model=source_variant.model if candidate_agent == source_variant.agent_id else "default",
         provider=source_variant.provider if candidate_agent == source_variant.agent_id else "default",
         model_config=source_variant.model_config if candidate_agent == source_variant.agent_id else {},

@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from .agents import builtin_real_drivers, probe_registry
 from .cases import ExperimentSpec, SuiteSpec, discover_case_paths, load_case
-from .comparison import build_experiment_comparison, compare_run_details
+from .comparison import build_experiment_comparison, compare_run_details, compare_variant_snapshots
 from .diagnosis import create_follow_up_experiment, diagnose_run
 from .failures import promote_failure
 from .drivers.custom import CustomCLIDriver
@@ -440,7 +440,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             }
             for variant_id in matrix["variant_ids"]
         ]
-        comparison = build_experiment_comparison(repository, runs, variants)
+        comparison = build_experiment_comparison(repository, runs, variants, definition=definition)
         return render(
             request,
             "experiment.html",
@@ -513,11 +513,13 @@ def create_app(root: str | Path = ".") -> FastAPI:
         )
 
     @app.get("/runs/{run_id}/explorer", response_class=HTMLResponse)
+    @app.get("/runs/{run_id}/contrast", response_class=HTMLResponse)
     async def explorer_page(request: Request, run_id: str):
         if not repository.get_run(run_id):
             return HTMLResponse("未找到运行记录", status_code=404)
-        explorer = compare_run_details(repository, run_id)
-        reference_id = (explorer.get("matched_reference") or {}).get("run_id")
+        reference_run_id = request.query_params.get("reference_run_id")
+        explorer = compare_run_details(repository, run_id, reference_run_id=reference_run_id)
+        reference_id = (explorer.get("reference") or {}).get("run_id")
         candidate_run = repository.get_run(run_id)
         reference_run = repository.get_run(reference_id) if reference_id else None
         for summary in (explorer.get("candidate_summary"), explorer.get("reference_summary")):
@@ -530,7 +532,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         return render(
             request,
             "explorer.html",
-            title=f"失败分析器 {run_id}",
+            title=f"Contrast {run_id}",
             explorer=explorer,
             diagnosis=diagnose_run(repository, run_id),
             timeline_rows=_timeline_rows(explorer),
@@ -543,6 +545,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             reference_raw=_raw_events(reference_run),
             candidate_otel_raw=_raw_otel_events(candidate_run),
             reference_otel_raw=_raw_otel_events(reference_run),
+            reference_options=_contrast_options(repository, run_id),
         )
 
     @app.get("/runs/{run_id}/follow-up/new", response_class=HTMLResponse)
@@ -569,7 +572,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
                 (await request.body()).decode("utf-8"), keep_blank_values=True
             ).items()
         }
-        independent_variable = (form.get("independent_variable") or ["verification_gate"])[-1]
+        independent_variable = (form.get("independent_variable") or ["run_mode"])[-1]
         candidate_agent_id = (form.get("candidate_agent_id") or [None])[-1] or None
         try:
             if independent_variable == "agent" and candidate_agent_id:
@@ -797,6 +800,12 @@ def _build_experiment(
                 raise ValueError("Baseline / Candidate 必须来自已选 Variant")
         elif len(selected_variant_ids) == 2:
             baseline_id, candidate_id = selected_variant_ids
+        variant_by_id = {variant.id: variant.to_dict() for variant in variants}
+        comparison = (
+            compare_variant_snapshots(variant_by_id[baseline_id], variant_by_id[candidate_id])
+            if baseline_id and candidate_id
+            else None
+        )
         name = _slug(first("experiment_name", "variant-comparison"))
         suite_id = _slug(first("suite_id", "variant-comparison"))
         return (
@@ -812,6 +821,7 @@ def _build_experiment(
                     "variant_ids": selected_variant_ids,
                     "baseline_variant_id": baseline_id or None,
                     "candidate_variant_id": candidate_id or None,
+                    "comparison": comparison,
                 },
             ),
             None,
@@ -924,10 +934,10 @@ def _variant_label(variant: dict[str, Any]) -> str:
     if str(subject_revision).upper() not in {"", "UNKNOWN"}:
         label += f" / revision {subject_revision}"
     config = variant.get("harness_config") or {}
-    if config.get("verification_gate") is True:
-        label += " · verification_gate=on"
-    elif config.get("verification_gate") is False:
-        label += " · verification_gate=off"
+    if config.get("prompt_intervention") is True:
+        label += " · prompt intervention=on"
+    elif config.get("prompt_intervention") is False:
+        label += " · prompt intervention=off"
     return label
 
 
@@ -1114,6 +1124,19 @@ def _timeline_rows(explorer: dict[str, Any]) -> list[dict[str, Any]]:
             "reference": reference[index] if index < len(reference) else None,
         }
         for index in range(max(len(candidate), len(reference)))
+    ]
+
+
+def _contrast_options(repository: Repository, run_id: str) -> list[dict[str, Any]]:
+    candidate = repository.get_run(run_id)
+    if not candidate:
+        return []
+    return [
+        run
+        for run in repository.list_runs()
+        if run.get("id") != run_id
+        and run.get("case_id") == candidate.get("case_id")
+        and run.get("case_revision") == candidate.get("case_revision")
     ]
 
 

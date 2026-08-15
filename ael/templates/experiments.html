@@ -14,7 +14,7 @@
   <div><span>实验</span><strong>{{ experiments|length }}</strong><small>已创建</small></div>
   <div><span>运行中</span><strong>{{ running|length }}</strong><small>可实时查看</small></div>
   <div><span>最近实验</span><strong>{{ experiment_cards[0].pass_rate if experiment_cards else "0/0" }}</strong><small>最近一次通过率</small></div>
-  <div><span>含差异实验</span><strong>{{ experiment_cards|selectattr("differential_cases")|list|length }}</strong><small>需要打开失败分析器</small></div>
+  <div><span>含差异实验</span><strong>{{ experiment_cards|selectattr("differential_cases")|list|length }}</strong><small>需要打开 Contrast</small></div>
 </section>
 
 {% if running %}

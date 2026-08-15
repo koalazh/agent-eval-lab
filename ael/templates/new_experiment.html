@@ -43,7 +43,15 @@
       <label>Baseline（可选）<select name="baseline_variant_id"><option value="">不指定</option>{% for variant in variants %}<option value="{{ variant.id }}" {% if selected_baseline == variant.id %}selected{% endif %}>{{ variant.name or variant.id }} · {{ variant.subject_revision }}</option>{% endfor %}</select></label>
       <label>Candidate（可选）<select name="candidate_variant_id"><option value="">不指定</option>{% for variant in variants %}<option value="{{ variant.id }}" {% if selected_candidate == variant.id %}selected{% endif %}>{{ variant.name or variant.id }} · {{ variant.subject_revision }}</option>{% endfor %}</select></label>
     </div>
-    <p class="muted">选择两个 Variant 时默认按所选顺序建立 Baseline / Candidate；明确选择后，页面会在运行前说明 Changed / Same / Unknown 和 comparison validity。</p>
+    <section class="comparison-preview" id="comparison-preview" aria-live="polite">
+      <div class="section-heading"><div><p class="eyebrow">运行前核对</p><h3>What changed?</h3></div><span class="pill neutral" id="comparison-preview-validity">等待选择</span></div>
+      <p class="muted" id="comparison-preview-note">选择两个 Variant 后，AEL 会在运行前显示 Changed / Same / Unknown；没有完整快照时保持 PARTIAL。</p>
+      <div class="comparison-preview-columns">
+        <div><strong>Changed</strong><ul id="comparison-preview-changed"><li class="muted">—</li></ul></div>
+        <div><strong>Same</strong><ul id="comparison-preview-same"><li class="muted">—</li></ul></div>
+        <div><strong>Unknown</strong><ul id="comparison-preview-unknown"><li class="muted">—</li></ul></div>
+      </div>
+    </section>
   </section>
 
   <section class="builder-section">
@@ -63,6 +71,28 @@
   const caseInputs = [...document.querySelectorAll('input[data-case-selected]')];
   const revisionInputs = [...document.querySelectorAll('select[data-case-revision]')];
   const variantInputs = [...document.querySelectorAll('input[data-variant-choice]')];
+  const baselineSelect = document.querySelector('select[name="baseline_variant_id"]');
+  const candidateSelect = document.querySelector('select[name="candidate_variant_id"]');
+  const comparisonValidity = document.querySelector('#comparison-preview-validity');
+  const comparisonNote = document.querySelector('#comparison-preview-note');
+  const comparisonLists = {
+    changed: document.querySelector('#comparison-preview-changed'),
+    same: document.querySelector('#comparison-preview-same'),
+    unknown: document.querySelector('#comparison-preview-unknown'),
+  };
+  const variants = {{ variants|tojson }};
+  const variantById = Object.fromEntries(variants.map((variant) => [variant.id, variant]));
+  const comparisonFields = [
+    ['agent_id', 'Agent'],
+    ['executable', 'Executable'],
+    ['agent_version', 'Agent version'],
+    ['subject_revision', 'subject revision'],
+    ['model', 'Model'],
+    ['provider', 'Provider'],
+    ['model_config', 'Model config'],
+    ['harness_config', 'Harness config'],
+    ['run_mode', 'Run mode'],
+  ];
   const caseCount = document.querySelector('#case-count');
   const variantCount = document.querySelector('#variant-count');
   const previewRuns = document.querySelector('#preview-runs');
@@ -77,13 +107,69 @@
     const total = selectedCases * selectedVariants * trialCount;
     previewRuns.textContent = total;
     previewText.textContent = total ? `${selectedCases} 个 Case × ${selectedVariants} 个 Variant × ${trialCount} 次试验 = ${total} 个 Run；每个 Run 都会保存 verifier、workspace、Agent 原生记录和 telemetry 证据。` : '请选择至少一个 Case 和一个可用 Variant。';
+    updateComparisonPreview();
   };
+  const stableValue = (value) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
+    }
+    if (Array.isArray(value)) return value.map(stableValue);
+    return value;
+  };
+  const known = (value) => value !== undefined && value !== null && value !== '' && value !== 'UNKNOWN' && value !== 'unknown' ? value : null;
+  const display = (value) => {
+    if (value === null) return 'UNKNOWN';
+    if (typeof value === 'object') return Object.keys(value).length ? JSON.stringify(value) : '{}';
+    return String(value);
+  };
+  const listItems = (element, values) => {
+    element.replaceChildren(...(values.length ? values : ['—']).map((value) => {
+      const item = document.createElement('li');
+      item.textContent = value;
+      if (value === '—') item.className = 'muted';
+      return item;
+    }));
+  };
+  function updateComparisonPreview() {
+    if (!comparisonValidity || !baselineSelect || !candidateSelect) return;
+    const checked = variantInputs.filter((input) => input.checked).map((input) => input.value);
+    const baselineId = baselineSelect.value || (checked.length === 2 ? checked[0] : '');
+    const candidateId = candidateSelect.value || (checked.length === 2 ? checked[1] : '');
+    const baseline = variantById[baselineId];
+    const candidate = variantById[candidateId];
+    if (!baseline || !candidate || baseline.id === candidate.id) {
+      comparisonValidity.textContent = '等待选择';
+      comparisonValidity.className = 'pill neutral';
+      comparisonNote.textContent = checked.length === 2 ? '将按所选顺序建立 Baseline / Candidate；也可以在下拉框中明确指定。' : '选择两个 Variant 后，AEL 会在运行前显示 Changed / Same / Unknown；没有完整快照时保持 PARTIAL。';
+      listItems(comparisonLists.changed, []);
+      listItems(comparisonLists.same, []);
+      listItems(comparisonLists.unknown, []);
+      return;
+    }
+    const changed = [], same = [], unknown = [];
+    for (const [field, label] of comparisonFields) {
+      const left = known(baseline[field]);
+      const right = known(candidate[field]);
+      if (left === null || right === null) unknown.push(label);
+      else if (JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right))) same.push(label);
+      else changed.push(`${label}: ${display(left)} → ${display(right)}`);
+    }
+    const validity = unknown.length ? 'PARTIAL' : changed.length <= 1 ? 'CONTROLLED' : 'DESCRIPTIVE';
+    comparisonValidity.textContent = validity;
+    comparisonValidity.className = `pill ${validity === 'CONTROLLED' ? 'pill-success' : validity === 'PARTIAL' ? 'pill-warning' : 'neutral'}`;
+    comparisonNote.textContent = validity === 'DESCRIPTIVE' ? '多个维度同时变化；结果只能作描述性比较，不推断因果归因。' : `Baseline ${baseline.name || baseline.id} → Candidate ${candidate.name || candidate.id}`;
+    listItems(comparisonLists.changed, changed);
+    listItems(comparisonLists.same, same);
+    listItems(comparisonLists.unknown, unknown);
+  }
   caseInputs.forEach((input) => input.addEventListener('change', () => {
     const revision = document.querySelector(`select[data-case-revision="${input.dataset.caseSelected}"]`);
     if (revision) revision.disabled = !input.checked;
     update();
   }));
   variantInputs.forEach((input) => input.addEventListener('change', update));
+  baselineSelect?.addEventListener('change', updateComparisonPreview);
+  candidateSelect?.addEventListener('change', updateComparisonPreview);
   trials?.addEventListener('input', update);
   update();
 })();

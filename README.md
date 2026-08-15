@@ -49,22 +49,23 @@ AEL 将原生输出和归一化事件与验证器真值分开保存：
 
     uv run ael ui --root . --host 127.0.0.1 --port 8713
 
-然后打开 `http://127.0.0.1:8713/experiments/new`，选择 `parser-boundary`、
-`premature-completion`、`state-reset`。每个 Case 只显示一个版本下拉框，默认选择当前
-可执行版本；历史版本只保留为只读历史证据。再勾选当前可用的真实 Agent，填写实际
-Model/Provider（或保留 `默认配置`），设置试验次数/并发数，点击 `运行实验`。整个路径
-不需要手写实验 YAML；不可用的 Agent 会保持“已禁用”，不会被当作验收证据。
+然后打开 `http://127.0.0.1:8713/experiments/new`，选择 Case 的可执行版本和 Variant。
+Variant 先在 `http://127.0.0.1:8713/variants` 中创建或 Duplicate；同一 Agent / Harness
+可以拥有多个 subject revision、model 和 harness config。选择 Baseline / Candidate 后，
+运行前页面会显示 Changed / Same / Unknown 以及 `CONTROLLED`、`PARTIAL` 或 `DESCRIPTIVE`
+comparison validity，再点击 `运行实验`。整个路径不需要手写实验 YAML；不可用的 Agent 会保持
+“已禁用”，不会被当作验收证据。
 
 实验详情页先展示真正用于决策的 Case 级对比：每个 Case 一张“指标为行、Variant 为列”的表，
 逐项比较 Agent 类型、Model、Provider、Verifier 结果、端到端时延、OTel 时延、输入/输出/缓存/总
 tokens、成本、工具调用、模型轮数、工具错误、变更文件和 OTel/native 证据。数值默认是每次
 trial 平均，未知不会用 0 代替；筛选会直接收窄 Case、结果状态和指标视角。完整的 Case × Variant
-状态只作为折叠的结果导航，用于打开具体 Run 或失败分析器，不把矩阵或 aggregate leaderboard
+状态只作为折叠的结果导航，用于打开具体 Run 或 Explicit Contrast，不把矩阵或 aggregate leaderboard
 当成主体。
 
 比较页面支持按“差异 Case”“失败 / 不稳定”“资源成本”“证据覆盖”以及单个 Case 聚焦；这符合
 业界评测比较的核心心智：先找改动导致的回归或改善，再查看时延、tokens、成本、错误和证据覆盖，
-最后进入单次 Run 解释原因。
+最后进入单次 Run 的 Explicit Contrast 解释差异。
 
 仓库中不会保存凭据。缺失 CLI、provider（提供方）不可用、认证错误或速率限制会记录为基础设施/进程证据，不会被提升为 Agent 任务失败。
 
@@ -83,10 +84,10 @@ Run 默认使用 `minimal` 观察配置。`minimal` 和 `telemetry` 保留归一
 
 阶段 B 的 Claude Code OTel 端到端切片已在本机真实验证：Claude Code 2.1.229 → OTLP
 HTTP → 仅本机 Collector → `.ael/otel/{logs,metrics,traces}.jsonl` → 按 `ael.run.id`
-摄取 → Run 证据 / 失败分析器。正式阶段 A 的 Run
+摄取 → Run 证据 / Explicit Contrast。正式阶段 A 的 Run
 `f0dab3c6f17a4447b392513d2ccc26a4` 实际收到了 2 个 log 记录、1 个 metric 记录、35
 个关联事件，包含 6 次 Model 调用、5 次工具调用、15,794 个输入 tokens、3,273 个输出 tokens；
-Run 页面和失败分析器都可见这些结果。这里的 35 个事件来自真实 Collector 输出，不是环境变量、
+Run 页面和 Explicit Contrast 都可见这些结果。这里的 35 个事件来自真实 Collector 输出，不是环境变量、
 空文件或 debug exporter 存在的证明。
 
 Collector 只绑定 loopback，使用 Docker 启动（不会启动 Grafana/Tempo/Prometheus/Jaeger）：
@@ -118,7 +119,7 @@ Run 页面会把这些证据分成几个可互相核对的视角：
   span；点击事件可以查看属性，原始 JSONL 只在页面底部按需展开；
 - 文件行为统计：按文件显示可观察的 `C / R / U / D`（创建 / 读取 / 更新 / 删除）次数；如果只有
   Workspace 变更而没有明确文件事件，会单独标注为回退估计，不冒充 Agent 操作；
-- 失败分析器（Failure Explorer）：把候选与 PASS reference 的强行为组局部对齐，并单独显示 Verifier、
+- Explicit Contrast：只在用户明确选择 Reference 后，把候选与 Reference 的强行为组局部对齐，并单独显示 Verifier、
   Workspace、native 和 OTel 的证据覆盖；顶部另有逐项指标表，直接比较时延、token、成本、工具调用和证据覆盖。
 
 AEL 遵循 OpenTelemetry 的 signal 边界：log、metric 和 trace span 不互相冒充。当前 Claude Code
@@ -153,24 +154,17 @@ AEL 聚焦于矩阵执行、差异比较、证据融合、失败调查、失败�
 
 ## 差异证据
 
-确定性的失败分析器会先检查 Case 版本，再选择最接近的 PASS 参考运行，并展示 SAME/CHANGED/UNKNOWN 变量、`CONTROLLED`/`PARTIAL`/`DESCRIPTIVE` 置信度、verifier/workspace 证据、归一化锚点时间线和首次有意义的分歧。如果参考 Run 或锚点证据不足，系统会明确说明，不会编造因果根因。
+Explicit Contrast 会先检查 Case 版本，再使用 Experiment 的 Baseline/Candidate 关系或用户明确选择的 Reference，并展示 SAME/CHANGED/UNKNOWN 变量、`CONTROLLED`/`PARTIAL`/`DESCRIPTIVE` 置信度、verifier/workspace 证据、归一化锚点时间线和首次有意义的分歧。没有明确 Reference 时，系统保持 UNKNOWN，不会跨数据库猜 PASS。
 
-Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。失败分析器的后续实验构建器会在同一 Case 版本上生成可编辑的基线 / 候选两个 Variant，真正写入 `verification_gate`、`run_mode` 或 Agent 变化后再运行，不需要用户离开 AEL 修改 YAML。
+Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。后续实验构建器会在同一 Case 版本上生成可编辑的 Baseline / Candidate 两个 Variant，明确改变 `prompt intervention`、`run_mode` 或 Agent 后再运行，不需要用户离开 AEL 修改 YAML。
 
 ## 失败记录簿（Failure Book）
 
 只有进程已完成且 verifier 返回 FAIL 的记录才会进入失败记录簿，并以 `OBSERVED` 开始；相同 Case revision 和 verifier signature 的重复失败会归并到同一 Failure Pattern，关联多个 Run，并在重复出现后变为 `REPRODUCED`。
 
-阶段 C 的真实 Web 验收记录（2026-08-14）：从失败分析器打开 Follow-up Builder（后续实验构建器），保持
-Claude Code、Model、3 个 Golden Case 和 `controlled` 观测配置不变，生成
-`verification_gate=false` 的 baseline 与 `verification_gate=true` 的 candidate。第一次真实复验实验
-`follow-up-golden-phase-a-final-75ae939d-f0dab3c6-6ede65` 完成 12 个 Claude Code Run；baseline
-全部 PASS，candidate 在 `premature-completion` 上出现 1 PASS / 1 FAIL，因此系统没有虚假标记为修复。
-第二次将试验次数编辑为 1 的真实复验实验
-`follow-up-golden-phase-a-final-75ae939d-f0dab3c6-18582b` 完成 6 个 Run，两个 Variant 的 3 个
-Case 均 PASS；原始 Failure `failure-f0dab3c6f17a4447b392513d2ccc26a4` 随之显示
-`FIXED`，再通过页面按钮固定后显示 `REGRESSION_GUARDED`。Regression Suite 直接保存
-`case_id=premature-completion + revision=b71c21621ce0a54f59774ab63251ecc9947973f150a42a145ab81d48575ed7d5`，没有复制 fixture。
+Failure lifecycle 不是长期产品中心。`FIXED` / `REGRESSED` 只由同一 Case revision 上具有区分力的
+Baseline / Candidate Experiment 推导；如果历史失败没有在 Baseline 中重现，即使 Candidate 全部通过，
+结果也保持 `INCONCLUSIVE`。Regression Suite 只保存经过确认的 `case_id + revision`，不会复制 fixture。
 
 ## 可运行示例
 
@@ -184,7 +178,7 @@ Case 均 PASS；原始 Failure `failure-f0dab3c6f17a4447b392513d2ccc26a4` 随之
 
 该示例会产生稳定通过和稳定失败两类结果。
 
-对于已经持久化的实验，可以执行 `uv run ael compare <experiment-a> <experiment-b> --root .`，再从本地 UI 打开对应 Run 的失败分析器。AEL 将数据库和大型证据写入 `.ael/`，该目录已被 Git 忽略。
+对于已经持久化的实验，可以执行 `uv run ael compare <experiment-a> <experiment-b> --root .`，再从本地 UI 打开对应 Run 的 Explicit Contrast。AEL 将数据库和大型证据写入 `.ael/`，该目录已被 Git 忽略。
 
 ## 许可
 

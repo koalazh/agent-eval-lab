@@ -17,6 +17,8 @@ _FINGERPRINT_FIELDS = (
     ("agent_version", "Agent 版本"),
     ("driver", "Driver"),
     ("driver_version", "Driver 版本"),
+    ("executable", "Executable"),
+    ("subject_revision", "subject revision"),
     ("model", "Model"),
     ("provider", "Provider"),
     ("model_config", "Model 配置"),
@@ -27,13 +29,81 @@ _FINGERPRINT_FIELDS = (
     ("case_revision", "Case 版本"),
     ("prompt_hash", "Prompt"),
     ("fixture_hash", "Fixture"),
-    ("ael_version", "AEL 版本"),
-    ("git_sha", "Git SHA"),
+)
+
+_VARIANT_SNAPSHOT_FIELDS = (
+    ("agent_id", "Agent"),
+    ("executable", "Executable"),
+    ("agent_version", "Agent 版本"),
+    ("subject_revision", "subject revision"),
+    ("model", "Model"),
+    ("provider", "Provider"),
+    ("model_config", "Model 配置"),
+    ("harness_config", "Harness 配置"),
+    ("run_mode", "运行模式"),
 )
 
 
 def _value(fingerprint: dict[str, Any], field: str) -> Any:
     return fingerprint.get(field, UNKNOWN)
+
+
+def _known_snapshot_value(value: Any) -> Any:
+    if value is None or value == "" or value == UNKNOWN or value == "unknown":
+        return UNKNOWN
+    return value
+
+
+def _snapshot_display(value: Any) -> str:
+    if value == UNKNOWN or value is None:
+        return UNKNOWN
+    if isinstance(value, dict):
+        return "configured" if value else "{}"
+    return str(value)
+
+
+def compare_variant_snapshots(
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare configured Variant snapshots before any Run exists."""
+    same: list[str] = []
+    changed: list[str] = []
+    unknown: list[str] = []
+    changes: list[dict[str, str]] = []
+    for field, label in _VARIANT_SNAPSHOT_FIELDS:
+        left = _known_snapshot_value(baseline.get(field, UNKNOWN))
+        right = _known_snapshot_value(candidate.get(field, UNKNOWN))
+        if left == UNKNOWN or right == UNKNOWN:
+            unknown.append(label)
+        elif canonical_json(left) == canonical_json(right):
+            same.append(label)
+        else:
+            changed.append(label)
+            changes.append(
+                {
+                    "label": label,
+                    "baseline": _snapshot_display(left),
+                    "candidate": _snapshot_display(right),
+                }
+            )
+    if unknown:
+        validity = "PARTIAL"
+    elif len(changed) <= 1:
+        validity = "CONTROLLED"
+    else:
+        validity = "DESCRIPTIVE"
+    return {
+        "validity": validity,
+        "comparison_validity": validity,
+        "same": same,
+        "changed": changed,
+        "unknown": unknown,
+        "changes": changes,
+        "changed_dimensions": len(changed),
+        "baseline_variant_id": baseline.get("id"),
+        "candidate_variant_id": candidate.get("id"),
+    }
 
 
 def variable_scope(
@@ -57,6 +127,8 @@ def variable_scope(
 
 def _expected_scope(scope: dict[str, Any]) -> str:
     changed = set(scope["changed"])
+    if changed == {"subject revision"}:
+        return "Subject revision 差异"
     if changed == {"Model"}:
         return "Model 差异"
     if changed and changed <= {"Agent", "Driver", "Agent 版本", "Driver 版本"}:
@@ -74,12 +146,7 @@ def comparison_confidence(scope: dict[str, Any]) -> str:
     changed = set(scope["changed"])
     if not changed:
         return "CONTROLLED"
-    if changed in (
-        {"Model"},
-        {"Harness 配置"},
-        {"Agent", "Driver"},
-        {"Agent 版本", "Driver 版本"},
-    ):
+    if len(changed) == 1:
         return "CONTROLLED"
     return "DESCRIPTIVE"
 
@@ -319,7 +386,7 @@ def _artifact_reference_diff(
             left.splitlines(keepends=True),
             right.splitlines(keepends=True),
             fromfile="candidate patch",
-            tofile="PASS reference patch",
+            tofile="reference patch",
         )
     )
 
@@ -596,10 +663,10 @@ def _variant_label_for_report(variant: dict[str, Any]) -> str:
     agent = variant.get("agent_id") or variant.get("id") or "Variant"
     label = f"{agent} / {_configured_label(variant.get('model'))}"
     config = variant.get("harness_config") or {}
-    if config.get("verification_gate") is True:
-        label += " · verification_gate=on"
-    elif config.get("verification_gate") is False:
-        label += " · verification_gate=off"
+    if config.get("prompt_intervention") is True:
+        label += " · prompt intervention=on"
+    elif config.get("prompt_intervention") is False:
+        label += " · prompt intervention=off"
     return label
 
 
@@ -714,7 +781,7 @@ def _pivot_cell(row: dict[str, Any] | None, key: str) -> dict[str, Any]:
 
     target_run_id = row.get("target_run_id")
     if target_run_id:
-        cell["href"] = f"/runs/{target_run_id}{'/explorer' if row.get('result', {}).get('fails') else ''}"
+        cell["href"] = f"/runs/{target_run_id}{'/contrast' if row.get('result', {}).get('fails') else ''}"
     return cell
 
 
@@ -752,6 +819,79 @@ def _case_state(rows: list[dict[str, Any]]) -> str:
     if any(row.get("classification") != "STABLE_PASS" for row in rows):
         return "problem"
     return "stable"
+
+
+def _decision_label(baseline: dict[str, Any], candidate: dict[str, Any]) -> str:
+    baseline_class = baseline.get("classification")
+    candidate_class = candidate.get("classification")
+    if not baseline.get("total") or not candidate.get("total"):
+        return "INCONCLUSIVE"
+    if baseline_class == "STABLE_FAIL" and candidate_class == "STABLE_PASS":
+        return "FIXED"
+    if baseline_class == "STABLE_PASS" and candidate_class == "STABLE_FAIL":
+        return "REGRESSED"
+    if baseline_class == candidate_class and baseline_class in {"STABLE_PASS", "STABLE_FAIL"}:
+        return "UNCHANGED"
+    return "INCONCLUSIVE"
+
+
+def _preferred_run(runs: list[dict[str, Any]], *, outcome: str | None = None) -> dict[str, Any] | None:
+    if outcome:
+        preferred = next((run for run in runs if run.get("task_outcome") == outcome), None)
+        if preferred:
+            return preferred
+    return runs[0] if runs else None
+
+
+def _decision_matrix(
+    runs: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    baseline_id = metadata.get("baseline_variant_id")
+    candidate_id = metadata.get("candidate_variant_id")
+    if not baseline_id or not candidate_id:
+        return {
+            "explicit_pair": False,
+            "baseline_variant_id": baseline_id,
+            "candidate_variant_id": candidate_id,
+            "rows": [],
+            "counts": {"FIXED": 0, "REGRESSED": 0, "UNCHANGED": 0, "INCONCLUSIVE": 0},
+            "note": "未指定 Baseline / Candidate；当前结果只能描述性展示。",
+        }
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for run in runs:
+        grouped[(str(run["case_id"]), str(run["variant_id"]))].append(run)
+    rows: list[dict[str, Any]] = []
+    case_ids = sorted({str(run["case_id"]) for run in runs})
+    for case_id in case_ids:
+        baseline_runs = grouped.get((case_id, str(baseline_id)), [])
+        candidate_runs = grouped.get((case_id, str(candidate_id)), [])
+        baseline = trial_summary([run.get("task_outcome", "UNKNOWN") for run in baseline_runs])
+        candidate = trial_summary([run.get("task_outcome", "UNKNOWN") for run in candidate_runs])
+        label = _decision_label(baseline, candidate)
+        candidate_run = _preferred_run(candidate_runs, outcome="FAIL" if label == "REGRESSED" else None)
+        reference_run = _preferred_run(baseline_runs, outcome="PASS" if label == "REGRESSED" else "FAIL" if label == "FIXED" else None)
+        rows.append(
+            {
+                "case_id": case_id,
+                "label": label,
+                "baseline": baseline,
+                "candidate": candidate,
+                "baseline_variant_id": baseline_id,
+                "candidate_variant_id": candidate_id,
+                "reference_run_id": reference_run.get("id") if reference_run else None,
+                "candidate_run_id": candidate_run.get("id") if candidate_run else None,
+            }
+        )
+    counts = {label: sum(row["label"] == label for row in rows) for label in ("FIXED", "REGRESSED", "UNCHANGED", "INCONCLUSIVE")}
+    return {
+        "explicit_pair": True,
+        "baseline_variant_id": baseline_id,
+        "candidate_variant_id": candidate_id,
+        "rows": rows,
+        "counts": counts,
+        "note": "FIXED / REGRESSED 只在 Baseline / Candidate 的试验结果具有区分力时显示；混合或缺失结果保持 INCONCLUSIVE。",
+    }
 
 
 def _summary_metric_value(summary: dict[str, Any], run: dict[str, Any], key: str) -> Any:
@@ -856,9 +996,13 @@ def build_experiment_comparison(
     repository: Repository,
     runs: list[dict[str, Any]],
     variants: list[dict[str, Any]],
+    *,
+    definition: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the decision tables behind the Experiment detail page."""
     matrix = matrix_report(runs)
+    definition = definition or {}
+    metadata = definition.get("metadata") or {}
     variant_by_id = {str(variant.get("id")): variant for variant in variants}
     variant_order = [str(variant.get("id")) for variant in variants if variant.get("id")]
     variant_order.extend(item for item in matrix["variant_ids"] if item not in variant_order)
@@ -943,15 +1087,66 @@ def build_experiment_comparison(
         "case_comparisons": case_comparisons,
         "case_filter_options": case_filter_options,
         "case_states": {option["id"]: option["state"] for option in case_filter_options},
+        "decision_matrix": _decision_matrix(runs, metadata),
+        "comparison_validity": metadata.get("comparison") or {
+            "validity": "DESCRIPTIVE" if metadata.get("baseline_variant_id") and metadata.get("candidate_variant_id") else "UNKNOWN",
+            "changed": [],
+            "same": [],
+            "unknown": [],
+            "changes": [],
+        },
         "notes": "数值默认按每次 trial 平均；成本只在 Agent/OTel 实际提供时显示；没有 OTel 时保留 Agent 原生事件覆盖；未知不等于 0。",
     }
 
 
-def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
+def _explicit_reference_run(
+    repository: Repository,
+    candidate: dict[str, Any],
+    reference_run_id: str | None,
+) -> tuple[dict[str, Any] | None, str]:
+    if reference_run_id:
+        reference = repository.get_run(reference_run_id)
+        return reference, "user-selected" if reference else "not-found"
+    definition = repository.read_experiment_definition(str(candidate.get("experiment_id") or "")) or {}
+    metadata = definition.get("metadata") or {}
+    baseline_id = metadata.get("baseline_variant_id")
+    candidate_id = metadata.get("candidate_variant_id")
+    if not baseline_id or not candidate_id:
+        return None, "no-explicit-pair"
+    if str(candidate.get("variant_id")) == str(candidate_id):
+        reference_variant_id = str(baseline_id)
+        relation = "experiment-baseline"
+    elif str(candidate.get("variant_id")) == str(baseline_id):
+        reference_variant_id = str(candidate_id)
+        relation = "experiment-candidate"
+    else:
+        return None, "not-in-explicit-pair"
+    candidates = [
+        run
+        for run in repository.list_runs(str(candidate.get("experiment_id")))
+        if str(run.get("case_id")) == str(candidate.get("case_id"))
+        and str(run.get("case_revision")) == str(candidate.get("case_revision"))
+        and str(run.get("variant_id")) == reference_variant_id
+    ]
+    same_trial = next((run for run in candidates if run.get("trial") == candidate.get("trial")), None)
+    return same_trial or (candidates[0] if candidates else None), relation
+
+
+def compare_run_details(
+    repository: Repository,
+    run_id: str,
+    reference_run_id: str | None = None,
+) -> dict[str, Any]:
     candidate = repository.get_run(run_id)
     if not candidate:
         return {}
-    match = matched_pass_run(repository, candidate)
+    reference, reference_source = _explicit_reference_run(repository, candidate, reference_run_id)
+    if reference and (
+        reference.get("case_id") != candidate.get("case_id")
+        or reference.get("case_revision") != candidate.get("case_revision")
+    ):
+        reference = None
+        reference_source = "case-mismatch"
     result: dict[str, Any] = {
         "run_id": run_id,
         "candidate": {
@@ -963,6 +1158,7 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
         "candidate_summary": _run_summary(repository, candidate),
         "artifact_diff": artifact_diff(repository, candidate),
         "evidence_coverage": candidate.get("evidence_coverage", {}),
+        "reference_source": reference_source,
     }
     result["metric_rows"] = _metric_comparison_rows(
         candidate,
@@ -970,18 +1166,21 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
         None,
         None,
     )
-    if not match or not match["sufficient"]:
+    if not reference:
         result.update(
             {
+                "reference": None,
                 "matched_reference": None,
                 "variable_scope": None,
+                "comparison_validity": "UNKNOWN",
                 "timeline_diff": {"status": "INSUFFICIENT_REFERENCE"},
                 "first_meaningful_divergence": {"status": "NO_CLEAR_DIVERGENCE"},
-                "note": "没有足够接近且 revision 相同的 PASS reference；不会进行轨迹归因。",
+                "note": "No controlled reference available. 请选择一个明确的 Run 进行 descriptive contrast；系统不会跨数据库猜 PASS reference。",
             }
         )
         return result
-    reference = match["run"]
+    scope = variable_scope(candidate["fingerprint"], reference["fingerprint"])
+    validity = comparison_confidence(scope)
     candidate_timeline = _timeline(repository, candidate)
     reference_timeline = _timeline(repository, reference)
     divergence = _meaningful_divergence_from_steps(candidate_timeline, reference_timeline)
@@ -1012,20 +1211,26 @@ def compare_run_details(repository: Repository, run_id: str) -> dict[str, Any]:
     candidate_artifact["candidate_reference_diff"] = _artifact_reference_diff(candidate, reference)
     result.update(
         {
+            "reference": {
+                "run_id": reference["id"],
+                "outcome": reference["task_outcome"],
+                "source": reference_source,
+            },
             "matched_reference": {
                 "run_id": reference["id"],
                 "outcome": reference["task_outcome"],
-                "score": match["score"],
+                "score": _match_score(candidate, reference),
             },
             "reference_summary": _run_summary(repository, reference),
             "artifact_diff": candidate_artifact,
-            "variable_scope": match["scope"],
+            "variable_scope": scope,
+            "comparison_validity": validity,
             "timeline_diff": {
                 "candidate": candidate_timeline,
                 "reference": reference_timeline,
             },
             "first_meaningful_divergence": divergence,
-            "note": "轨迹证据仅用于描述，不建立因果根因。",
+            "note": "这是 Explicit Contrast；轨迹证据仅用于描述，不建立因果根因。",
         }
     )
     result["metric_rows"] = _metric_comparison_rows(

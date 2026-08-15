@@ -51,6 +51,11 @@ def test_web_variant_duplicate_edit_and_experiment_snapshot(tmp_path: Path, monk
     case_path = _case(tmp_path)
     client = TestClient(create_app(tmp_path))
 
+    empty_builder = client.get("/experiments/new")
+    assert empty_builder.status_code == 200
+    assert "What changed?" in empty_builder.text
+    assert "comparison-preview" in empty_builder.text
+
     created = client.post(
         "/variants/new",
         data={
@@ -131,6 +136,8 @@ def test_web_variant_duplicate_edit_and_experiment_snapshot(tmp_path: Path, monk
     assert snapshots[variant_b_id]["subject_revision"] == "git:def456"
     assert definition["metadata"]["baseline_variant_id"] == variant_a_id
     assert definition["metadata"]["candidate_variant_id"] == variant_b_id
+    assert definition["metadata"]["comparison"]["validity"] == "DESCRIPTIVE"
+    assert set(definition["metadata"]["comparison"]["changed"]) == {"subject revision", "Harness 配置"}
 
     client.post(
         f"/variants/{variant_a_id}",

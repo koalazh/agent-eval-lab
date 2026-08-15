@@ -94,35 +94,56 @@ def promote_failure(repository: Repository, failure_id: str) -> CaseSpec:
 
 def reconcile_follow_up(repository: Repository, experiment_id: str, source_run_id: str) -> str | None:
     failure = repository.failure_for_run(source_run_id)
+    source_run = repository.get_run(source_run_id)
     definition = repository.read_experiment_definition(experiment_id) or {}
     metadata = definition.get("metadata") or {}
+    baseline_id = metadata.get("baseline_variant_id")
     candidate_id = metadata.get("candidate_variant_id")
-    if not failure or not candidate_id:
+    if not failure or not source_run or not baseline_id or not candidate_id:
         return None
-    candidate_runs = [
-        run
-        for run in repository.list_runs(experiment_id)
-        if run["variant_id"] == candidate_id and run["run_status"] == "COMPLETED"
-    ]
-    if not candidate_runs:
+
+    def relevant_runs(variant_id: str) -> list[dict[str, Any]]:
+        return [
+            run
+            for run in repository.list_runs(experiment_id)
+            if run["variant_id"] == variant_id
+            and run["case_id"] == source_run["case_id"]
+            and run["case_revision"] == source_run["case_revision"]
+            and run["run_status"] == "COMPLETED"
+        ]
+
+    baseline_runs = relevant_runs(str(baseline_id))
+    candidate_runs = relevant_runs(str(candidate_id))
+    if not baseline_runs or not candidate_runs:
         return None
+    baseline_outcomes = [run["task_outcome"] for run in baseline_runs]
     candidate_outcomes = [run["task_outcome"] for run in candidate_runs]
+    source_outcome = failure["details"].get("task_outcome") or source_run.get("task_outcome")
     transition = None
-    if failure["details"].get("task_outcome") == "FAIL" and all(outcome == "PASS" for outcome in candidate_outcomes):
+    if source_outcome == "FAIL" and all(outcome == "FAIL" for outcome in baseline_outcomes) and all(
+        outcome == "PASS" for outcome in candidate_outcomes
+    ):
         transition = "FIXED"
         status = FailureStatus.FIXED
-    elif failure["details"].get("task_outcome") == "PASS" and any(outcome == "FAIL" for outcome in candidate_outcomes):
+    elif source_outcome == "PASS" and all(outcome == "PASS" for outcome in baseline_outcomes) and all(
+        outcome == "FAIL" for outcome in candidate_outcomes
+    ):
         transition = "REGRESSED"
         status = FailureStatus.REPRODUCED
     else:
         return None
+
     details = dict(failure["details"])
     details.update(
         {
             "follow_up_experiment_id": experiment_id,
-            "baseline_variant_id": metadata.get("baseline_variant_id"),
+            "baseline_variant_id": baseline_id,
             "candidate_variant_id": candidate_id,
+            "baseline_outcomes": baseline_outcomes,
             "candidate_outcomes": candidate_outcomes,
+            "case_id": source_run["case_id"],
+            "case_revision": source_run["case_revision"],
+            "discriminating_experiment": True,
             "lifecycle_transition": transition,
         }
     )

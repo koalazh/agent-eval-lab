@@ -1272,7 +1272,7 @@ def align_trajectories(left: list[dict[str, Any]], right: list[dict[str, Any]]) 
                     "MATCH": "对齐",
                     "DIVERGENCE": "行为差异",
                     "CANDIDATE_ONLY": "仅候选",
-                    "REFERENCE_ONLY": "仅 PASS 参考",
+                    "REFERENCE_ONLY": "仅 Reference",
                 }[status],
                 "first_divergence": bool(meaningful and first),
                 "boundary_divergence": bool(meaningful and boundary),

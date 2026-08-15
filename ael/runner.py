@@ -116,7 +116,7 @@ class Runner:
             if endpoint:
                 env["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
         case_prompt = case.prompt
-        if variant.harness_config.get("verification_gate") is True:
+        if variant.harness_config.get("prompt_intervention") is True:
             case_prompt += (
                 "\n\nBefore reporting completion, run the complete test suite, inspect every "
                 "failure it reveals, and only then finish the task."
