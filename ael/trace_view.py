@@ -735,6 +735,7 @@ def build_telemetry_overview(
     tool_errors = snapshot.get("tool_errors")
     signal_counts = trace_view.get("signal_counts", {})
     native_event_count = trace_view.get("native_event_count", len(native_events))
+    correlation = otel.get("correlation") or "ael.run.id"
     value_source = "OTel / Agent 原生用量" if not otel_events else "OTel token 用量"
     cards = [
         {"label": "Model 调用", "value": _number_label(snapshot.get("model_calls")), "detail": "由可观察 Model 事件归纳"},
@@ -751,7 +752,7 @@ def build_telemetry_overview(
         {
             "label": "关联记录",
             "value": f"{len(otel_events)} 条" if otel_events else f"{native_event_count} 条",
-            "detail": "按 ael.run.id 关联 OTel" if otel_events else "Agent 原生记录",
+            "detail": f"按 {correlation} 关联 OTel" if otel_events else "Agent 原生记录",
         },
     ]
     if otel_events:
@@ -909,6 +910,7 @@ def build_otel_status(
     """Describe the OTel boundary without turning absence into an error."""
     fingerprint = run.get("fingerprint") if isinstance(run.get("fingerprint"), dict) else {}
     agent_id = str(fingerprint.get("agent_id") or run.get("variant_id") or "unknown")
+    correlation = str(run.get("evidence_correlation") or "ael.run.id")
     if otel_events:
         signals = Counter(_signal(event) for event in otel_events)
         signal_text = "、".join(
@@ -919,7 +921,7 @@ def build_otel_status(
         return {
             "state": "observed",
             "label": "已接收 OTel",
-            "detail": f"Collector 已按 ael.run.id 关联 {len(otel_events)} 条记录（{signal_text or '未知 signal'}）。",
+            "detail": f"Collector 已按 {correlation} 关联 {len(otel_events)} 条记录（{signal_text or '未知 signal'}）。",
             "class": "pill-success",
         }
     if agent_id in {"codex", "pi", "hermes", "custom-harness"}:
@@ -1065,19 +1067,35 @@ def build_evidence_sources(
     lifecycle = otel.get("ael_lifecycle") if isinstance(otel.get("ael_lifecycle"), dict) else {}
     lifecycle_spans = lifecycle.get("span_count")
     lifecycle_exported = lifecycle.get("exported") is True
-    return [
-        {
+    if run.get("evidence_kind") == "session":
+        verifier_source = {
+            "label": "Case Verifier",
+            "value": "UNKNOWN",
+            "status": "unknown",
+            "detail": "外部 Session 没有绑定 Case verifier；AEL 不为它生成任务真值。",
+        }
+        workspace_source = {
+            "label": "Workspace",
+            "value": "UNKNOWN",
+            "status": "unknown",
+            "detail": "外部 Session 不由 AEL 接管 workspace；文件状态需要用户另行确认。",
+        }
+    else:
+        verifier_source = {
             "label": "Verifier",
             "value": verifier_outcome,
             "status": "observed" if verifier_outcome != "unknown" else "unknown",
             "detail": "任务真值：由 Case verifier 决定 PASS / FAIL。",
-        },
-        {
+        }
+        workspace_source = {
             "label": "Workspace",
             "value": f"{len(changed_files)} 个有效变更",
             "status": "observed" if (workspace_observed if workspace_observed is not None else bool(changed_files)) else "unknown",
             "detail": "环境真值：只列出过滤 cache 后的变更文件。",
-        },
+        }
+    return [
+        verifier_source,
+        workspace_source,
         {
             "label": "OTel 日志",
             "value": f"{signal_counts.get('logs', 0)} 条",

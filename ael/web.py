@@ -25,6 +25,7 @@ from .models import Agent, AgentVariant, Capabilities, ObservationProfile, RunMo
 from .persistence import Repository
 from .reports import matrix_report
 from .runner import Runner
+from .sessions import discover_sessions, get_session
 from .trace_view import (
     align_trajectories,
     build_evidence_sources,
@@ -171,6 +172,54 @@ def create_app(root: str | Path = ".") -> FastAPI:
     @app.get("/agents", response_class=HTMLResponse)
     async def agents_page(request: Request):
         return render(request, "agents.html", title="Agent 配置", agents=agent_rows())
+
+    @app.get("/sessions", response_class=HTMLResponse)
+    async def sessions_page(request: Request):
+        all_sessions = discover_sessions(repository.root, repository.list_runs(), include_managed=True)
+        sessions = [session for session in all_sessions if not session["managed"]]
+        managed_sessions = [session for session in all_sessions if session["managed"]]
+        return render(
+            request,
+            "sessions.html",
+            title="Sessions",
+            sessions=sessions,
+            managed_sessions=managed_sessions,
+        )
+
+    @app.get("/sessions/{session_id}", response_class=HTMLResponse)
+    async def session_page(request: Request, session_id: str):
+        session = get_session(repository.root, session_id, repository.list_runs())
+        if not session:
+            return HTMLResponse("未找到 Session", status_code=404)
+        evidence = _session_evidence(session)
+        managed_run = repository.get_run(session["managed_run_id"]) if session.get("managed_run_id") else None
+        return render(
+            request,
+            "run.html",
+            title=f"Session {session_id}",
+            session=session,
+            managed_run=managed_run,
+            run=evidence["run"],
+            run_status_label="外部 Session",
+            metadata={},
+            run_duration_label=evidence["run_duration_label"],
+            changes={},
+            diff="",
+            verifier={},
+            verifier_phases=[],
+            telemetry=session["telemetry"],
+            native_events=[],
+            otel_events=session["events"],
+            trace_view=evidence["trace_view"],
+            otel_status=evidence["otel_status"],
+            telemetry_overview=evidence["telemetry_overview"],
+            evidence_sources=evidence["evidence_sources"],
+            trajectory_steps=evidence["trajectory_steps"],
+            file_activity=evidence["file_activity"],
+            otel_raw=session["raw"],
+            native_raw="",
+            visible_changed_files=[],
+        )
 
     @app.get("/variants", response_class=HTMLResponse)
     async def variants_page(request: Request):
@@ -648,6 +697,37 @@ def create_app(root: str | Path = ".") -> FastAPI:
         return RedirectResponse(f"/failures/{failure_id}", status_code=303)
 
     return app
+
+
+def _session_evidence(session: dict[str, Any]) -> dict[str, Any]:
+    otel_events = session.get("events") or []
+    telemetry = session.get("telemetry") or {}
+    trace_view = build_trace_view(otel_events, [])
+    run = {
+        "id": session["vendor_session_id"],
+        "case_id": "external-session",
+        "variant_id": session.get("agent") or "UNKNOWN",
+        "trial": "—",
+        "task_outcome": "UNVERIFIED",
+        "fingerprint": {"agent_id": session.get("agent") or "UNKNOWN"},
+        "evidence_kind": "session",
+        "evidence_correlation": "session.id",
+    }
+    duration_ms = (telemetry.get("otel") or {}).get("duration_ms")
+    try:
+        run_duration_label = _duration_label(float(duration_ms) / 1000) if duration_ms is not None else trace_view["total_duration_label"]
+    except (TypeError, ValueError):
+        run_duration_label = trace_view["total_duration_label"]
+    return {
+        "run": run,
+        "trace_view": trace_view,
+        "run_duration_label": run_duration_label,
+        "otel_status": build_otel_status(run, telemetry, otel_events, trace_view),
+        "telemetry_overview": build_telemetry_overview(telemetry, otel_events, trace_view),
+        "evidence_sources": build_evidence_sources(run, {}, [], telemetry, trace_view, workspace_observed=False),
+        "trajectory_steps": build_trajectory(otel_events, [], verifier={}, changed_files=[]),
+        "file_activity": build_file_activity([], otel_events, [], run_id=session["vendor_session_id"]),
+    }
 
 
 def _variant_rows(repository: Repository, agent_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

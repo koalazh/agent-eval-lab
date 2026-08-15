@@ -2,18 +2,24 @@
 {% block content %}
 <section class="hero run-hero">
   <div>
+    {% if session %}
+    <p class="eyebrow">External Session 证据</p>
+    <h1>{{ session.agent }} <span class="muted">·</span> <code>{{ session.vendor_session_id }}</code></h1>
+    <p class="muted">正常 terminal 产生 · {{ session.origin }} · <strong>UNVERIFIED</strong></p>
+    {% else %}
     <p class="eyebrow">Run 证据</p>
     <h1>{{ run.case_id }} <span class="muted">·</span> {{ run.variant_id }}</h1>
     <p class="muted">第 {{ run.trial }} 次试验 <span class="dot">·</span> <code>{{ run.id }}</code></p>
+    {% endif %}
   </div>
-  <a class="button secondary" href="/runs/{{ run.id }}/contrast">打开 Contrast</a>
+  {% if session %}<div class="hero-actions"><a class="button" href="/sessions/{{ session.vendor_session_id }}/case/new">Create Case</a><a class="button secondary" href="/sessions">返回 Sessions</a>{% if managed_run %}<a class="button secondary" href="/runs/{{ managed_run.id }}">打开 Managed Run</a>{% endif %}</div>{% else %}<a class="button secondary" href="/runs/{{ run.id }}/contrast">打开 Contrast</a>{% endif %}
 </section>
 
 <section class="run-scoreboard">
-  <div class="score-card score-{{ run.task_outcome|lower }}"><span>任务结果</span><strong>{{ run.task_outcome }}</strong><small>Verifier 决定任务真值</small></div>
-  <div class="score-card"><span>进程状态</span><strong>{{ run_status_label }}</strong><small>运行生命周期</small></div>
-  <div class="score-card"><span>运行时长</span><strong>{{ run_duration_label }}</strong><small>端到端 Run 时长</small></div>
-  <div class="score-card"><span>有效变更</span><strong>{{ visible_changed_files|length }}<em> 个文件</em></strong><small>已过滤缓存 / pyc</small></div>
+  {% if session %}<div class="score-card score-unknown"><span>Session outcome</span><strong>UNVERIFIED</strong><small>外部 Session 未绑定 Case verifier</small></div>{% else %}<div class="score-card score-{{ run.task_outcome|lower }}"><span>任务结果</span><strong>{{ run.task_outcome }}</strong><small>Verifier 决定任务真值</small></div>{% endif %}
+  <div class="score-card"><span>{% if session %}Session 状态{% else %}进程状态{% endif %}</span><strong>{{ run_status_label }}</strong><small>{% if session %}外部证据生命周期{% else %}运行生命周期{% endif %}</small></div>
+  <div class="score-card"><span>{% if session %}Session 时长{% else %}运行时长{% endif %}</span><strong>{{ run_duration_label }}</strong><small>{% if session %}真实 OTel 时间跨度{% else %}端到端 Run 时长{% endif %}</small></div>
+  <div class="score-card"><span>{% if session %}明确文件证据{% else %}有效变更{% endif %}</span><strong>{{ visible_changed_files|length }}<em> 个文件</em></strong><small>{% if session %}没有接管 Workspace{% else %}已过滤缓存 / pyc{% endif %}</small></div>
   <div class="score-card"><span>OTel</span><strong>{{ otel_status.label }}</strong><small>{% if otel_events %}{{ trace_view.otel_event_count }} 条关联记录{% elif trace_view.native_event_count %}{{ trace_view.native_event_count }} 条 Agent 原生记录{% else %}无关联记录{% endif %}</small></div>
 </section>
 
@@ -58,8 +64,8 @@
 </section>
 
 <section class="file-activity-section" id="files">
-  <div class="section-heading"><div><p class="eyebrow">Workspace × Agent 行为</p><h2>文件行为统计</h2></div><span class="muted">C / R / U / D</span></div>
-  <p class="section-lede">按文件汇总可观察到的创建（C）、读取（R）、更新（U）和删除（D）。这张表只统计明确的 native / OTel 文件事件；Workspace 变更回退会单独标注。</p>
+  <div class="section-heading"><div><p class="eyebrow">{% if session %}External Session × Agent 行为{% else %}Workspace × Agent 行为{% endif %}</p><h2>文件行为统计</h2></div><span class="muted">C / R / U / D</span></div>
+  <p class="section-lede">按文件汇总可观察到的创建（C）、读取（R）、更新（U）和删除（D）。这张表只统计明确的 native / OTel 文件事件；{% if session %}外部 Session 没有 AEL Workspace 真值，缺失保持 UNKNOWN。{% else %}Workspace 变更回退会单独标注。{% endif %}</p>
   <div class="file-activity-summary"><span>{{ file_activity.file_count }} 个文件</span><span>{{ file_activity.operation_count }} 次文件操作</span><span>{{ file_activity.observed_operation_count }} 次有明确 Agent 事件</span></div>
   {% if file_activity.rows %}
   <div class="file-activity-table-wrap"><table class="file-activity-table"><thead><tr><th>文件</th><th>创建 C</th><th>读取 R</th><th>更新 U</th><th>删除 D</th><th>总计</th><th>证据来源</th></tr></thead><tbody>
@@ -97,8 +103,13 @@
 </section>
 
 <section class="two-col evidence-detail-section" id="truth">
+  {% if session %}
+  <div class="card verifier-card"><div class="subsection-title"><strong>Case Verifier</strong><span class="result-chip result-unknown">UNKNOWN</span></div><p class="muted">外部 Session 没有 CaseRevision，因此不会生成任务真值。</p></div>
+  <div class="card workspace-card"><div class="subsection-title"><strong>Workspace</strong><span class="result-chip result-unknown">UNKNOWN</span></div><p class="muted">AEL 没有接管这个 terminal workspace；当前页面只展示 OTel 行为证据。</p></div>
+  {% else %}
   <div class="card verifier-card"><div class="subsection-title"><strong>Verifier（任务真值）</strong><span class="result-chip result-{{ verifier.get("outcome", "UNKNOWN")|lower }}">{{ verifier.get("outcome", "UNKNOWN") }}</span></div><p class="muted">{{ verifier.get("duration_seconds", "未知") }} 秒 · verifier 决定任务是否完成</p>{% if verifier_phases %}<div class="verifier-phase-panel"><div class="subsection-title"><strong>Verifier 检查阶段</strong><span class="muted">来自 stdout / stderr，不代表 Agent 执行轨迹</span></div><table class="verifier-phase-table"><thead><tr><th>阶段</th><th>结果</th><th>观察到的输出</th></tr></thead><tbody>{% for phase in verifier_phases %}<tr><th>{{ phase.label }}</th><td class="status-{{ phase.status_class }}">{{ phase.status }}</td><td>{{ phase.detail }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}<details><summary>展开 Verifier 输出</summary><pre>{{ verifier.get("stdout", "") }}{{ verifier.get("stderr", "") }}</pre></details></div>
   <div class="card workspace-card"><div class="subsection-title"><strong>Workspace（环境真值）</strong><span class="muted">{{ visible_changed_files|length }} 个有效变更</span></div><p>{{ visible_changed_files|join(", ") or "没有有效变更文件" }}</p><details><summary>展开产物 diff</summary><pre>{{ diff }}</pre></details></div>
+  {% endif %}
 </section>
 
 <section class="raw-section"><div class="section-heading"><div><p class="eyebrow">原始证据</p><h2>底层记录</h2></div><span class="muted">只在需要核对 Collector / Agent 记录时展开</span></div><details><summary>Collector ingest 后的 OTel 原始记录</summary><pre>{{ otel_raw }}</pre></details><details><summary>Agent 原生原始记录</summary><pre>{{ native_raw }}</pre></details></section>

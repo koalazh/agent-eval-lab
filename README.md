@@ -128,6 +128,17 @@ Run 页面会把这些证据分成几个可互相核对的视角：
 - Explicit Contrast：只在用户明确选择 Reference 后，把候选与 Reference 的强行为组局部对齐，并单独显示 Verifier、
   Workspace、native 和 OTel 的证据覆盖；顶部另有逐项指标表，直接比较时延、token、成本、工具调用和证据覆盖。
 
+## External Session
+
+Sessions 页面直接从本机 Collector 的 \`session.id\` 投影外部终端工作，不建立第二套 Outcome / Failure
+状态。没有 \`ael.run.id\` 的 Session 标为 \`UNVERIFIED\`，可以查看 Model、duration、tokens、tools、
+OTel signal 和 Event Timeline；没有真实 span 时不会显示 Waterfall。带有 \`ael.run.id\` 的 Managed
+Session 只回链到已有 Run，不重复成为另一条实验记录。
+
+真实外部 proof Session \`5375a38f-51fa-4be0-a464-b0e55f9eba3d\`（Claude Code 2.1.229）由普通
+terminal 在临时目录直接执行 \`claude\` 产生，没有经过 AEL Runner；Collector 收到 36 条 OTel log、
+7 条 OTel metric、0 个 trace span，Sessions 页面显示 \`UNVERIFIED\` 和 OTel Event Timeline。
+
 AEL 遵循 OpenTelemetry 的 signal 边界：log、metric 和 trace span 不互相冒充。当前 Claude Code
 真实 Run 已经完成 OTLP → Collector → 持久化 → `ael.run.id` 关联，并能看到真实 logs/metrics；如果
 Agent 没有发出 trace span，页面会明确显示“未收到真实 span”，而不会为了视觉效果伪造父子 span。

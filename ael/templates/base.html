@@ -221,6 +221,24 @@
     .case-detail-card p { margin-bottom: 0; color: #33434f; line-height: 1.6; }
     .case-detail-meta { padding: 0 6px; }
     .case-history-warning { margin: 14px 0 0; padding: 11px 13px; border-radius: 8px; color: #8a5a00; background: #fff6df; font-size: 12px; line-height: 1.5; }
+    .session-list-section, .session-linked-section { padding: 24px; }
+    .session-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+    .session-card { display: block; padding: 18px; border: 1px solid #dfe5ea; border-radius: 12px; background: #fff; color: inherit; text-decoration: none; }
+    .session-card:hover { border-color: #246bce; box-shadow: 0 7px 20px #17212b12; transform: translateY(-1px); }
+    .session-card-head, .session-card-foot, .session-card-meta div { display: flex; justify-content: space-between; gap: 12px; }
+    .session-card h3 { margin: 15px 0 7px; font-size: 18px; }
+    .session-card p { margin: 0; color: #596874; overflow-wrap: anywhere; }
+    .session-unverified { color: #8a5a00; background: #fff4d6; font-weight: 750; }
+    .session-card-meta { margin: 18px 0; }
+    .session-card-meta div { padding: 8px 0; border-bottom: 1px solid #edf1f4; font-size: 12px; }
+    .session-card-meta dt { color: #75838e; }
+    .session-card-meta dd { margin: 0; max-width: 72%; text-align: right; overflow-wrap: anywhere; }
+    .session-card-foot { align-items: center; padding-top: 12px; border-top: 1px solid #edf1f4; color: #75838e; font-size: 11px; }
+    .session-card-foot strong { color: #246bce; }
+    .linked-session-list { display: grid; gap: 8px; margin-top: 16px; }
+    .linked-session-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 11px 13px; border: 1px solid #e0e7ec; border-radius: 8px; background: #f8fafc; font-size: 12px; }
+    .linked-session-row span { color: #596874; }
+    .linked-session-row a { margin-left: auto; color: #246bce; font-weight: 700; text-decoration: none; }
     .case-catalog-card.is-archived { opacity: .74; background: #f8fafb; }
     .case-catalog-card.is-archived h3 { text-decoration: line-through; text-decoration-color: #b6c0c7; }
     .case-catalog-note { min-height: 0 !important; margin: 10px 0 0; padding: 8px 10px; border-radius: 7px; color: #52616d !important; background: #f3f6f8; font-size: 12px; }
@@ -477,7 +495,7 @@
       .run-scoreboard, .telemetry-cards, .home-stats, .setup-summary, .failure-summary, .failure-detail-summary, .experiment-scoreboard, .builder-strategy-grid, .comparison-answer-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .home-hero, .builder-hero, .setup-hero, .failure-hero, .failure-detail-hero { display: block; }
       .home-illustration { margin-top: 22px; }
-      .experiment-card-grid, .agent-catalog-grid, .case-catalog-grid, .failure-card-grid, .focus-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .experiment-card-grid, .agent-catalog-grid, .case-catalog-grid, .failure-card-grid, .focus-grid, .session-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .case-group-grid, .agent-builder-grid, .comparison-preview-columns { grid-template-columns: 1fr; }
       .telemetry-lower { grid-template-columns: 1fr; }
       .evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -494,7 +512,7 @@
     }
     @media (max-width: 620px) {
       .two-col { grid-template-columns: 1fr; }
-      .run-scoreboard, .telemetry-cards, .evidence-grid, .home-stats, .setup-summary, .failure-summary, .failure-detail-summary, .experiment-scoreboard, .experiment-card-grid, .agent-catalog-grid, .case-catalog-grid, .failure-card-grid, .focus-grid, .builder-strategy-grid, .comparison-answer-strip { grid-template-columns: 1fr; }
+      .run-scoreboard, .telemetry-cards, .evidence-grid, .home-stats, .setup-summary, .failure-summary, .failure-detail-summary, .experiment-scoreboard, .experiment-card-grid, .agent-catalog-grid, .case-catalog-grid, .failure-card-grid, .focus-grid, .session-card-grid, .builder-strategy-grid, .comparison-answer-strip { grid-template-columns: 1fr; }
       .builder-submit, .failure-actions, .run-preview-card { display: block; }
       .builder-submit button, .failure-actions .button { margin-top: 14px; }
       .lifecycle-rail { display: grid; grid-template-columns: 1fr; gap: 8px; }.lifecycle-line { width: 2px; height: 15px; margin: 0 0 0 14px; }.lifecycle-step { display: grid; grid-template-columns: 36px 1fr; column-gap: 8px; }.lifecycle-step b { grid-row: span 2; }.lifecycle-step strong, .lifecycle-step small { align-self: center; }
@@ -527,6 +545,7 @@
     <a href="/">实验室</a>
     <a href="/experiments/new">新建实验</a>
     <a href="/failures">失败模式</a>
+    <a href="/sessions">Sessions</a>
     <a href="/cases">Case</a>
     <a href="/variants">Variant</a>
     <a href="/agents">配置</a>

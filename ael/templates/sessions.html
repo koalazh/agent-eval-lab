@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="setup-hero">
+  <div>
+    <p class="eyebrow">Evidence / 外部终端</p>
+    <h1>Sessions</h1>
+    <p class="home-lede">这里来自 Collector 中真实的 <code>session.id</code>。外部 Session 不是 AEL 发起，默认只标记为 <strong>UNVERIFIED</strong>，不会获得 Case 任务结论。</p>
+  </div>
+  <div class="hero-actions"><a class="button secondary" href="/">返回实验室</a><a class="button secondary" href="/cases">查看 Case</a></div>
+</section>
+
+<section class="setup-summary session-summary">
+  <div><span>外部 Session</span><strong>{{ sessions|length }}</strong><small>可打开 Evidence</small></div>
+  <div><span>结果边界</span><strong>UNVERIFIED</strong><small>没有绑定 Case verifier</small></div>
+  <div><span>发现方式</span><strong>session.id</strong><small>真实 OTel Collector 记录</small></div>
+  <div><span>Managed 去重</span><strong>{{ managed_sessions|length }}</strong><small>只回链已有 Run</small></div>
+</section>
+
+<section class="session-list-section">
+  <div class="section-heading"><div><p class="eyebrow">External Claude / Agent Session</p><h2>外部 Session</h2></div><span class="muted">刷新页面重新扫描 Collector</span></div>
+  {% if sessions %}
+  <div class="session-card-grid">
+    {% for session in sessions %}
+    <a class="session-card" href="/sessions/{{ session.vendor_session_id }}">
+      <div class="session-card-head"><span class="pill session-unverified">UNVERIFIED</span><span class="muted">{{ session.event_count }} 条证据</span></div>
+      <h3>{{ session.agent }}</h3>
+      <p><code>{{ session.vendor_session_id }}</code></p>
+      <dl class="session-card-meta">
+        <div><dt>开始</dt><dd>{{ session.started_at }}</dd></div>
+        <div><dt>结束</dt><dd>{{ session.ended_at }}</dd></div>
+        <div><dt>cwd / project</dt><dd>{{ session.cwd }}</dd></div>
+        <div><dt>signals</dt><dd>{% for key, value in session.signals.items() %}{{ key }} {{ value }}{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
+      </dl>
+      <div class="session-card-foot"><span>{{ session.origin }}</span><strong>打开 Evidence →</strong></div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state"><strong>还没有外部 Session</strong><p>在普通 terminal 启动一次带 Claude 原生 OTel 的 <code>claude</code>，然后刷新本页。AEL 不会替你启动该 Session。</p><pre>CLAUDE_CODE_ENABLE_TELEMETRY=1 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 claude</pre></div>
+  {% endif %}
+</section>
+
+{% if managed_sessions %}
+<section class="session-linked-section">
+  <div class="section-heading"><div><p class="eyebrow">Managed Run 去重</p><h2>已由 Experiment 管理的 Vendor Session</h2></div><span class="muted">不复制成独立外部卡片</span></div>
+  <p class="section-lede">这些 session 带有 <code>ael.run.id</code>，属于已有 Managed Run；AEL 将它们回链到 Run，而不是在外部 Session 列表中再次伪装成独立实验对象。</p>
+  <div class="linked-session-list">
+    {% for session in managed_sessions %}<div class="linked-session-row"><code>{{ session.vendor_session_id }}</code><span>{{ session.origin }}</span>{% if session.managed_run_id %}<a href="/runs/{{ session.managed_run_id }}">打开 Run Evidence →</a>{% endif %}</div>{% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}
