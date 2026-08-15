@@ -66,6 +66,15 @@ class Repository:
                     constraints_json TEXT NOT NULL,
                     PRIMARY KEY (id, revision)
                 );
+                CREATE TABLE IF NOT EXISTS case_catalog (
+                    id TEXT PRIMARY KEY,
+                    source_path TEXT,
+                    display_name TEXT NOT NULL,
+                    notes TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS suites (
                     id TEXT PRIMARY KEY,
                     kind TEXT NOT NULL,
@@ -151,6 +160,52 @@ class Repository:
     def list_cases(self) -> list[dict[str, Any]]:
         with self._connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM cases ORDER BY id, revision")]
+
+    def list_case_catalog(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            return [dict(row) for row in db.execute("SELECT * FROM case_catalog ORDER BY id")]
+
+    def get_case_catalog(self, case_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM case_catalog WHERE id=?", (case_id,)).fetchone()
+        return dict(row) if row else None
+
+    def save_case_catalog(
+        self,
+        case_id: str,
+        *,
+        source_path: str | None = None,
+        display_name: str | None = None,
+        notes: str = "",
+        status: str = "ACTIVE",
+    ) -> None:
+        if status not in {"ACTIVE", "ARCHIVED"}:
+            raise ValueError(f"Case 目录状态不合法：{status}")
+        now = now_iso()
+        with self._connect() as db:
+            existing = db.execute("SELECT created_at FROM case_catalog WHERE id=?", (case_id,)).fetchone()
+            created_at = existing["created_at"] if existing else now
+            db.execute(
+                """
+                INSERT INTO case_catalog(id, source_path, display_name, notes, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  source_path=COALESCE(excluded.source_path, case_catalog.source_path),
+                  display_name=excluded.display_name,
+                  notes=excluded.notes,
+                  status=excluded.status,
+                  updated_at=excluded.updated_at
+                """,
+                (
+                    case_id,
+                    source_path,
+                    display_name or case_id,
+                    notes,
+                    status,
+                    created_at,
+                    now,
+                ),
+            )
 
     def get_case(self, case_id: str, revision: str | None = None) -> CaseSpec | None:
         query = "SELECT * FROM cases WHERE id=?"

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="hero">
-  <div><p class="muted">后续实验</p><h1>把假设变成可运行实验</h1><p class="muted">源 Run {{ run_id }} · 不离开 AEL，也不复制 Case fixture（测试夹具）</p></div>
+  <div><p class="muted">后续实验</p><h1>把假设变成可运行实验</h1><p class="muted">源 Run {{ run_id }} · 不离开 AEL，也不复制 Case 测试夹具</p></div>
   <a class="button secondary" href="/runs/{{ run_id }}/explorer">返回失败分析器</a>
 </section>
 
@@ -61,8 +61,8 @@
         {% for row in agents if row.capabilities.available %}<option value="{{ row.agent.id }}">{{ row.agent.display_name }}</option>{% endfor %}
       </select>
     </label>
-    <label>试验次数（trials）<input type="number" name="trials" min="1" value="{{ draft.trials }}"></label>
-    <label>并发数（concurrency）<input type="number" name="max_concurrency" min="1" value="{{ draft.max_concurrency }}"></label>
+    <label>试验次数<input type="number" name="trials" min="1" value="{{ draft.trials }}"></label>
+    <label>并发数<input type="number" name="max_concurrency" min="1" value="{{ draft.max_concurrency }}"></label>
     <p class="muted" id="follow-up-selection-note">当前会把 verification_gate 从关闭改为开启；表格会随上方选择同步更新。</p>
     <button type="submit">运行后续实验</button>
   </form>
@@ -101,7 +101,7 @@
     setRow("follow-up-row-run-mode", "运行模式", modeLabels[sourceMode] || sourceMode, selected === "run_mode" ? (modeLabels[sourceMode === "native" ? "controlled" : "native"] || "未知") : (modeLabels[sourceMode] || sourceMode), selected === "run_mode");
     setRow("follow-up-row-verification-gate", "verification_gate", selected === "verification_gate" ? "关闭" : "未配置", selected === "verification_gate" ? "开启" : "未配置", selected === "verification_gate");
     if (note) {
-      note.textContent = selected === "verification_gate" ? "当前会把 verification_gate 从关闭改为开启；表格会随上方选择同步更新。" : selected === "run_mode" ? "当前会固定 Agent / Model，只切换运行模式；表格展示真实 baseline / candidate 差异。" : "当前会固定 Case 与观测配置，只替换 candidate Agent；不支持的组合会在提交前拒绝。";
+      note.textContent = selected === "verification_gate" ? "当前会把 verification_gate 从关闭改为开启；表格会随上方选择同步更新。" : selected === "run_mode" ? "当前会固定 Agent / Model，只切换运行模式；表格展示真实基线 / 候选差异。" : "当前会固定 Case 与观测配置，只替换候选 Agent；不支持的组合会在提交前拒绝。";
     }
   }
   variable.addEventListener("change", applyPreview);

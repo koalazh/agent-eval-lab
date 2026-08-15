@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="setup-hero">
+  <div>
+    <p class="eyebrow">配置 / Case 管理</p>
+    <h1>{{ case.display_name }}</h1>
+    <p class="muted"><code>{{ case.id }}</code> · {{ case.revision_count }} 个版本 · {% if case.status == "ARCHIVED" %}已归档{% else %}已启用{% endif %}</p>
+  </div>
+  <div class="hero-actions"><a class="button" href="/experiments/new">用最新版本创建实验</a><a class="button secondary" href="/cases">返回 Case 管理</a></div>
+</section>
+
+<section class="case-management-section">
+  <div class="section-heading"><div><p class="eyebrow">任务真值</p><h2>查看一个版本</h2></div><span class="pill {% if selected_revision.runnable %}pill-success{% else %}pill-warning{% endif %}">{{ selected_revision.revision_note }}</span></div>
+  <form class="case-version-picker" method="get" action="/cases/{{ case.id }}">
+    <label>版本
+      <select name="revision" onchange="this.form.submit()">
+        {% for revision in case.revisions %}<option value="{{ revision.revision }}" {% if revision.revision == selected_revision.revision %}selected{% endif %}>{{ revision.revision[:12] }} · {{ revision.revision_note }}</option>{% endfor %}
+      </select>
+    </label>
+  </form>
+  <div class="case-detail-grid">
+    <article class="case-detail-card"><span class="muted">任务说明</span><p>{{ selected_revision.prompt|replace("targeted test", "定向测试")|replace("full suite", "完整测试套件") }}</p></article>
+    <dl class="detail-list case-detail-meta">
+      <div><dt>版本哈希</dt><dd><code>{{ selected_revision.revision }}</code></dd></div>
+      <div><dt>路径</dt><dd><code>{{ selected_revision.relative_path }}</code></dd></div>
+      <div><dt>verifier 超时</dt><dd>{{ selected_revision.timeout_seconds }} 秒</dd></div>
+      <div><dt>运行资格</dt><dd>{{ "可用于新实验" if selected_revision.runnable else "仅用于历史证据" }}</dd></div>
+    </dl>
+  </div>
+  {% if not selected_revision.runnable %}<p class="case-history-warning">这个历史版本没有独立的测试夹具快照，AEL 不会把它伪装成可执行版本。要重新运行，请选择当前版本。</p>{% endif %}
+</section>
+
+<section class="case-management-section">
+  <div class="section-heading"><div><p class="eyebrow">目录操作</p><h2>管理信息</h2></div><span class="muted">只更新目录，不修改不可变任务真值</span></div>
+  <form class="case-management-form" method="post" action="/cases/{{ case.id }}">
+    <input type="hidden" name="action" value="update">
+    <label>显示名称<input name="display_name" value="{{ case.display_name }}"></label>
+    <label>备注<textarea name="notes" rows="3">{{ case.notes }}</textarea></label>
+    <div class="form-actions"><button type="submit">保存目录信息</button>{% if case.status == "ARCHIVED" %}<button class="button secondary" name="action" value="restore" type="submit">恢复 Case</button>{% else %}<button class="button danger" name="action" value="archive" type="submit">归档 Case</button>{% endif %}</div>
+  </form>
+  <p class="muted">归档不会删除历史 Run、Failure 或 Regression Suite；它只会从新建实验的可选列表中隐藏。</p>
+</section>
+{% endblock %}

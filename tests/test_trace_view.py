@@ -3,6 +3,8 @@ from __future__ import annotations
 from ael.trace_view import (
     align_trajectories,
     build_metric_snapshot,
+    build_file_activity,
+    build_otel_status,
     build_telemetry_overview,
     build_trace_view,
     build_trajectory,
@@ -231,6 +233,21 @@ def test_telemetry_overview_keeps_missing_cache_metrics_unknown():
     assert cards["缓存创建"] == "未知"
 
 
+def test_native_overview_does_not_present_zero_otel_signals_as_evidence():
+    native = [{"source": "native", "kind": "command", "name": "pytest", "timestamp": "1000000000"}]
+    view = build_trace_view([], native)
+    overview = build_telemetry_overview({"native_usage": {"input_tokens": 4, "output_tokens": 2}}, [], view, native)
+    status = build_otel_status({"fingerprint": {"agent_id": "codex"}}, {}, [])
+
+    assert overview["signals"] == [
+        {"key": "native", "label": "Agent 原生记录", "value": 1, "detail": "没有 OTel 时使用的行为证据"}
+    ]
+    assert overview["cards"][-1]["label"] == "关联记录"
+    assert overview["cards"][-1]["value"] == "1 条"
+    assert overview["cards"][-1]["detail"] == "Agent 原生记录"
+    assert status["label"] == "Agent 未提供 OTel"
+
+
 def test_trajectory_alignment_marks_first_different_action():
     left = [
         {"group": "READ", "label": "读取 · Read"},
@@ -246,3 +263,63 @@ def test_trajectory_alignment_marks_first_different_action():
 
     assert rows[1]["first_divergence"] is True
     assert rows[1]["status"] == "REFERENCE_ONLY"
+
+
+def test_file_activity_counts_explicit_native_operations_once():
+    native = [
+        {"source": "native", "kind": "tool_call", "name": "Read", "data": {}},
+        {
+            "source": "native",
+            "kind": "tool_result",
+            "name": "tool",
+            "data": {"tool_use_result": {"file": {"filePath": "/tmp/run/paginator.py"}}},
+        },
+        {"source": "native", "kind": "tool_call", "name": "Edit", "data": {}},
+        {
+            "source": "native",
+            "kind": "tool_result",
+            "name": "tool",
+            "data": {"tool_use_result": {"filePath": "/tmp/run/paginator.py"}},
+        },
+        {
+            "source": "native",
+            "kind": "file_change",
+            "data": {"item": {"id": "change-1", "changes": [{"kind": "update", "path": "/tmp/run/other.py"}]}},
+        },
+        {
+            "source": "native",
+            "kind": "file_change",
+            "data": {"item": {"id": "change-1", "changes": [{"kind": "update", "path": "/tmp/run/other.py"}]}},
+        },
+    ]
+
+    activity = build_file_activity(native, [], ["paginator.py", "other.py"])
+
+    rows = {row["path"]: row for row in activity["rows"]}
+    assert rows["paginator.py"]["read"] == 1
+    assert rows["paginator.py"]["update"] == 1
+    assert rows["other.py"]["update"] == 1
+    assert activity["operation_count"] == 3
+
+
+def test_file_activity_marks_workspace_fallback_as_not_observed():
+    activity = build_file_activity([], [], ["changed.py"])
+
+    row = activity["rows"][0]
+    assert row["path"] == "changed.py"
+    assert row["update"] == 1
+    assert row["observed"] is False
+
+
+def test_native_turn_started_is_not_presented_as_agent_completion():
+    events = [
+        {"source": "native", "kind": "final", "data": {"type": "turn.started"}},
+        {"source": "native", "kind": "command", "name": "pytest", "data": {}},
+        {"source": "native", "kind": "final", "data": {"type": "turn.completed"}},
+    ]
+
+    steps = build_trajectory(events, [])
+    view = build_trace_view([], events)
+
+    assert [step["group"] for step in steps] == ["VERIFY", "COMPLETE"]
+    assert view["events"][0]["operation"] == "回合开始"

@@ -27,11 +27,99 @@ from .runner import Runner
 from .trace_view import (
     align_trajectories,
     build_evidence_sources,
+    build_file_activity,
     build_telemetry_overview,
     build_trace_view,
     build_trajectory,
     build_verifier_phases,
+    build_otel_status,
 )
+
+
+def _case_options(repository: Repository) -> list[dict[str, Any]]:
+    """Return one current runnable option plus historical, read-only revisions."""
+    options: dict[tuple[str, str], dict[str, Any]] = {}
+    for path in discover_case_paths(repository.root):
+        try:
+            case = load_case(path)
+        except (OSError, ValueError):
+            continue
+        if case.id == "verify-answer-001":
+            continue
+        options[(case.id, case.revision)] = {
+            "id": case.id,
+            "revision": case.revision,
+            "prompt": case.prompt,
+            "path": str(path),
+            "relative_path": str(path.relative_to(repository.root)),
+            "timeout_seconds": case.timeout_seconds,
+            "runnable": True,
+            "is_current": True,
+            "revision_note": "当前可执行版本",
+        }
+    for row in repository.list_cases():
+        source_value = row.get("source_path")
+        if not source_value or row["id"] == "verify-answer-001":
+            continue
+        source = Path(source_value).resolve()
+        if not _is_within(repository.root, source) or not source.is_file():
+            continue
+        key = (row["id"], row["revision"])
+        if key in options:
+            continue
+        options[key] = {
+            "id": row["id"],
+            "revision": row["revision"],
+            "prompt": row["prompt"],
+            "path": str(source),
+            "relative_path": str(source.relative_to(repository.root)),
+            "timeout_seconds": row["timeout_seconds"],
+            "runnable": False,
+            "is_current": False,
+            "revision_note": "历史 Run 版本（当前工作区没有可执行快照）",
+        }
+    return sorted(options.values(), key=lambda item: (item["id"], not item["is_current"], item["revision"]))
+
+
+def _case_catalog(repository: Repository, *, include_archived: bool = False) -> list[dict[str, Any]]:
+    options = _case_options(repository)
+    catalog = {row["id"]: row for row in repository.list_case_catalog()}
+    grouped: dict[str, dict[str, Any]] = {}
+    for option in options:
+        group = grouped.setdefault(
+            option["id"],
+            {
+                "id": option["id"],
+                "display_name": catalog.get(option["id"], {}).get("display_name") or option["id"],
+                "notes": catalog.get(option["id"], {}).get("notes") or "",
+                "status": catalog.get(option["id"], {}).get("status") or "ACTIVE",
+                "source_path": option["relative_path"],
+                "revisions": [],
+            },
+        )
+        group["revisions"].append(option)
+        if option["is_current"]:
+            group["current"] = option
+    result = [group for group in grouped.values() if include_archived or group["status"] != "ARCHIVED"]
+    for group in result:
+        group.setdefault("current", group["revisions"][0] if group["revisions"] else {})
+        group["revision_count"] = len(group["revisions"])
+        group["runnable"] = bool(group["current"].get("runnable"))
+    return sorted(result, key=lambda item: item["id"])
+
+
+def _case_groups(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for case in cases:
+        group = groups.setdefault(
+            case["id"],
+            {"id": case["id"], "prompt": case["prompt"], "revisions": [], "selected_revision": case["revision"]},
+        )
+        group["revisions"].append(case)
+        if case.get("is_current"):
+            group["selected_revision"] = case["revision"]
+            group["prompt"] = case["prompt"]
+    return sorted(groups.values(), key=lambda item: item["id"])
 
 
 def create_app(root: str | Path = ".") -> FastAPI:
@@ -53,42 +141,11 @@ def create_app(root: str | Path = ".") -> FastAPI:
         return probe_registry(repository)
 
     def case_options() -> list[dict[str, Any]]:
-        options: dict[tuple[str, str], dict[str, Any]] = {}
-        for path in discover_case_paths(repository.root):
-            try:
-                case = load_case(path)
-            except (OSError, ValueError):
-                continue
-            if case.id == "verify-answer-001":
-                continue
-            options[(case.id, case.revision)] = {
-                "id": case.id,
-                "revision": case.revision,
-                "prompt": case.prompt,
-                "path": str(path),
-                "relative_path": str(path.relative_to(repository.root)),
-                "timeout_seconds": case.timeout_seconds,
-            }
-        for row in repository.list_cases():
-            source_value = row.get("source_path")
-            if not source_value:
-                continue
-            source = Path(source_value).resolve()
-            if not _is_within(repository.root, source) or not source.is_file():
-                continue
-            key = (row["id"], row["revision"])
-            if row["id"] == "verify-answer-001":
-                continue
-            if key not in options:
-                options[key] = {
-                    "id": row["id"],
-                    "revision": row["revision"],
-                    "prompt": row["prompt"],
-                    "path": str(source),
-                    "relative_path": str(source.relative_to(repository.root)),
-                    "timeout_seconds": row["timeout_seconds"],
-                }
-        return sorted(options.values(), key=lambda item: (item["id"], item["revision"]))
+        return [
+            option
+            for group in _case_catalog(repository)
+            for option in group["revisions"]
+        ]
 
     async def run_in_background(experiment: ExperimentSpec) -> None:
         try:
@@ -116,7 +173,76 @@ def create_app(root: str | Path = ".") -> FastAPI:
 
     @app.get("/cases", response_class=HTMLResponse)
     async def cases_page(request: Request):
-        return render(request, "cases.html", title="Case 配置", cases=case_options())
+        return render(
+            request,
+            "cases.html",
+            title="Case 管理",
+            cases=_case_catalog(repository, include_archived=True),
+            active_case_count=sum(group["status"] != "ARCHIVED" for group in _case_catalog(repository, include_archived=True)),
+            archived_case_count=sum(group["status"] == "ARCHIVED" for group in _case_catalog(repository, include_archived=True)),
+        )
+
+    @app.get("/cases/new", response_class=HTMLResponse)
+    async def new_case_page(request: Request):
+        return render(request, "case_form.html", title="登记 Case", form={}, error=None)
+
+    @app.post("/cases/new", response_class=HTMLResponse)
+    async def create_case_page(request: Request):
+        form = {
+            key: values
+            for key, values in parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True).items()
+        }
+        try:
+            case_path = _resolve_case_path(repository.root, (form.get("case_path") or [""])[-1])
+            case = load_case(case_path)
+            existing = repository.get_case_catalog(case.id)
+            if existing and existing.get("status") != "ARCHIVED":
+                raise ValueError(f"Case 已在目录中：{case.id}")
+            repository.save_case_catalog(
+                case.id,
+                source_path=str(case_path),
+                display_name=(form.get("display_name") or [case.id])[-1].strip() or case.id,
+                notes=(form.get("notes") or [""])[-1].strip(),
+                status="ACTIVE",
+            )
+        except (OSError, ValueError) as exc:
+            return render(request, "case_form.html", title="登记 Case", form=form, error=str(exc), _status_code=400)
+        return RedirectResponse(f"/cases/{case.id}", status_code=303)
+
+    @app.get("/cases/{case_id}", response_class=HTMLResponse)
+    async def case_detail_page(request: Request, case_id: str):
+        group = next((item for item in _case_catalog(repository, include_archived=True) if item["id"] == case_id), None)
+        if not group:
+            return HTMLResponse("未找到 Case", status_code=404)
+        revision = request.query_params.get("revision")
+        selected = next((item for item in group["revisions"] if item["revision"] == revision), None) if revision else group["current"]
+        selected = selected or group["current"]
+        return render(request, "case_detail.html", title=f"Case {case_id}", case=group, selected_revision=selected)
+
+    @app.post("/cases/{case_id}")
+    async def update_case_page(request: Request, case_id: str):
+        form = {
+            key: values
+            for key, values in parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True).items()
+        }
+        action = (form.get("action") or ["update"])[-1]
+        group = next((item for item in _case_catalog(repository, include_archived=True) if item["id"] == case_id), None)
+        if not group:
+            return HTMLResponse("未找到 Case", status_code=404)
+        if action == "archive":
+            status = "ARCHIVED"
+        elif action == "restore":
+            status = "ACTIVE"
+        else:
+            status = group["status"]
+        repository.save_case_catalog(
+            case_id,
+            source_path=group["current"].get("path"),
+            display_name=(form.get("display_name") or [group["display_name"]])[-1].strip() or case_id,
+            notes=(form.get("notes") or [group["notes"]])[-1].strip(),
+            status=status,
+        )
+        return RedirectResponse(f"/cases/{case_id}", status_code=303)
 
     @app.get("/experiments", response_class=HTMLResponse)
     async def experiments_page(request: Request):
@@ -135,14 +261,20 @@ def create_app(root: str | Path = ".") -> FastAPI:
     async def new_experiment_page(request: Request):
         rows = agent_rows()
         cases = case_options()
+        case_groups = _case_groups(cases)
+        requested_case = request.query_params.get("case_id")
+        selected_case_ids = [
+            group["id"] for group in case_groups if requested_case and group["id"] == requested_case
+        ]
         return render(
             request,
             "new_experiment.html",
             title="新建实验",
             agents=rows,
             cases=cases,
-            case_groups=_case_groups(cases),
-            selected_cases=[],
+            case_groups=case_groups,
+            selected_cases=selected_case_ids,
+            selected_revisions={group["id"]: group["selected_revision"] for group in case_groups},
             selected_agents=[row["agent"]["id"] for row in rows if row["capabilities"]["available"]],
             error=None,
             form={},
@@ -167,7 +299,8 @@ def create_app(root: str | Path = ".") -> FastAPI:
                 agents=rows,
                 cases=case_options(),
                 case_groups=_case_groups(case_options()),
-                selected_cases=form.get("case_path", []),
+                selected_cases=_selected_case_ids(form),
+                selected_revisions=_selected_revisions(form),
                 selected_agents=form.get("agent_id", []),
                 error=str(exc),
                 form=form,
@@ -226,6 +359,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         native_events = _read_jsonl(evidence / "native" / "events.jsonl", limit=None)
         otel_events = _read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=None)
         trace_view = build_trace_view(otel_events, native_events)
+        visible_changed_files = _visible_changed_files(changes)
         return render(
             request,
             "run.html",
@@ -242,11 +376,12 @@ def create_app(root: str | Path = ".") -> FastAPI:
             native_events=native_events,
             otel_events=otel_events,
             trace_view=trace_view,
-            telemetry_overview=build_telemetry_overview(telemetry, otel_events, trace_view),
+            otel_status=build_otel_status(run, telemetry, otel_events, trace_view),
+            telemetry_overview=build_telemetry_overview(telemetry, otel_events, trace_view, native_events),
             evidence_sources=build_evidence_sources(
                 run,
                 verifier,
-                _visible_changed_files(changes),
+                visible_changed_files,
                 telemetry,
                 trace_view,
                 workspace_observed=(evidence / "workspace" / "changes.json").exists(),
@@ -255,11 +390,17 @@ def create_app(root: str | Path = ".") -> FastAPI:
                 otel_events,
                 native_events,
                 verifier=verifier,
-                changed_files=_visible_changed_files(changes),
+                changed_files=visible_changed_files,
+            ),
+            file_activity=build_file_activity(
+                native_events,
+                otel_events,
+                visible_changed_files,
+                run_id=run_id,
             ),
             otel_raw=_read_text(evidence / "telemetry" / "otel" / "raw.jsonl", limit=30000),
             native_raw=_read_text(evidence / "native" / "raw.jsonl", limit=30000),
-            visible_changed_files=_visible_changed_files(changes),
+            visible_changed_files=visible_changed_files,
         )
 
     @app.get("/runs/{run_id}/explorer", response_class=HTMLResponse)
@@ -405,21 +546,39 @@ def _build_experiment(
     def first(name: str, default: str = "") -> str:
         return (form.get(name) or [default])[-1].strip()
 
-    allowed_paths = set(discover_case_paths(repository.root))
-    for row in repository.list_cases():
-        source_value = row.get("source_path")
-        if not source_value:
-            continue
-        source = Path(source_value).resolve()
-        if _is_within(repository.root, source) and source.is_file():
-            allowed_paths.add(source)
-
-    case_paths = [Path(value).resolve() for value in form.get("case_path", []) if value]
+    case_paths: list[Path] = []
+    revision_fields = {
+        key.removeprefix("case_revision__"): values[-1]
+        for key, values in form.items()
+        if key.startswith("case_revision__") and values and values[-1]
+    }
+    selected_case_ids = {
+        key.removeprefix("case_selected__")
+        for key, values in form.items()
+        if key.startswith("case_selected__") and values and values[-1]
+    }
+    if selected_case_ids:
+        revision_fields = {
+            case_id: revision
+            for case_id, revision in revision_fields.items()
+            if case_id in selected_case_ids
+        }
+    if revision_fields:
+        available = {(option["id"], option["revision"]): option for option in _case_options(repository)}
+        catalog = {row["id"]: row for row in repository.list_case_catalog()}
+        for case_id, revision in revision_fields.items():
+            if catalog.get(case_id, {}).get("status") == "ARCHIVED":
+                raise ValueError(f"Case 已归档：{case_id}；请先恢复后再运行实验")
+            option = available.get((case_id, revision))
+            if not option:
+                raise ValueError(f"Case revision 不存在：{case_id} / {revision[:12]}")
+            if not option.get("runnable"):
+                raise ValueError(f"Case revision {revision[:12]} 只有历史证据，当前工作区没有可执行快照；请选择最新版本")
+            case_paths.append(Path(option["path"]).resolve())
+    else:
+        case_paths = [_resolve_case_path(repository.root, value) for value in form.get("case_path", []) if value]
     if not case_paths:
         raise ValueError("至少选择一个 Case")
-    unregistered = [path for path in case_paths if path not in allowed_paths]
-    if unregistered:
-        raise ValueError(f"Case 必须来自当前工作区已注册的 Case：{unregistered[0]}")
     cases = []
     selected_case_ids: set[str] = set()
     for path in case_paths:
@@ -565,15 +724,38 @@ def _experiment_cards(repository: Repository, experiments: list[dict[str, Any]])
     return cards
 
 
-def _case_groups(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups: dict[str, dict[str, Any]] = {}
-    for case in cases:
-        group = groups.setdefault(
-            case["id"],
-            {"id": case["id"], "prompt": case["prompt"], "revisions": []},
-        )
-        group["revisions"].append(case)
-    return sorted(groups.values(), key=lambda item: item["id"])
+def _selected_revisions(form: dict[str, list[str]]) -> dict[str, str]:
+    return {
+        key.removeprefix("case_revision__"): values[-1]
+        for key, values in form.items()
+        if key.startswith("case_revision__") and values and values[-1]
+    }
+
+
+def _selected_case_ids(form: dict[str, list[str]]) -> list[str]:
+    selected = [
+        key.removeprefix("case_selected__")
+        for key, values in form.items()
+        if key.startswith("case_selected__") and values and values[-1]
+    ]
+    if selected:
+        return selected
+    return [
+        case_id
+        for case_id, _ in _selected_revisions(form).items()
+    ]
+
+
+def _resolve_case_path(root: Path, value: str) -> Path:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    candidate = candidate.resolve()
+    if not _is_within(root, candidate) or not candidate.is_file() or candidate.name != "case.yaml":
+        raise ValueError(f"Case 必须来自当前工作区已注册且可读的 case.yaml：{value}")
+    if candidate not in set(discover_case_paths(root)):
+        raise ValueError(f"Case 必须来自当前工作区已注册且已发现的 Case：{value}")
+    return candidate
 
 
 def _failure_summary(failures: list[dict[str, Any]]) -> dict[str, int]:

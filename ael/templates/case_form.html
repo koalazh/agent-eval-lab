@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="setup-hero">
+  <div>
+    <p class="eyebrow">配置 / Case 管理</p>
+    <h1>登记一个 Case</h1>
+    <p class="home-lede">AEL 不在页面里改写 Case 任务真值。这里把当前工作区已有的 <code>case.yaml</code> 登记到目录中，之后可以管理显示信息、启用状态和版本选择。</p>
+  </div>
+  <a class="button secondary" href="/cases">返回 Case 管理</a>
+</section>
+{% if error %}<section class="error"><strong>无法登记：</strong> {{ error }}</section>{% endif %}
+<form class="case-management-form" method="post" action="/cases/new">
+  <label>工作区内的 case.yaml 路径
+    <input name="case_path" value="{{ form.get('case_path', [''])[-1] }}" placeholder="例如：examples/cases/premature-completion/case.yaml" required>
+  </label>
+  <label>显示名称（可选）
+    <input name="display_name" value="{{ form.get('display_name', [''])[-1] }}" placeholder="默认使用 Case ID">
+  </label>
+  <label>备注（可选）
+    <textarea name="notes" rows="4" placeholder="说明这个 Case 适合观察什么行为变化">{{ form.get('notes', [''])[-1] }}</textarea>
+  </label>
+  <div class="form-actions"><a class="button secondary" href="/cases">取消</a><button type="submit">登记 Case</button></div>
+</form>
+<section class="case-management-note"><strong>版本规则</strong><p>Case 版本由任务 prompt、fixture、verifier 和约束内容计算。历史版本只读；需要改变任务真值时，应在项目中形成新版本，AEL 会把旧 Run 保留为历史证据。</p></section>
+{% endblock %}

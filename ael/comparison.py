@@ -24,7 +24,7 @@ _FINGERPRINT_FIELDS = (
     ("run_mode", "运行模式"),
     ("observation_profile", "观测配置"),
     ("runtime", "Runtime"),
-    ("case_revision", "Case revision"),
+    ("case_revision", "Case 版本"),
     ("prompt_hash", "Prompt"),
     ("fixture_hash", "Fixture"),
     ("ael_version", "AEL 版本"),
@@ -501,7 +501,7 @@ def _aggregate_metric(summaries: list[dict[str, Any]], key: str) -> float | None
 def _evidence_label(metrics: dict[str, Any]) -> str:
     if metrics.get("otel_events") is None:
         native_events = metrics.get("native_events")
-        return f"native {_number_label(native_events, decimals=1)} 个事件" if native_events is not None else "未知"
+        return f"Agent 原生 {_number_label(native_events, decimals=1)} 个事件" if native_events is not None else "未知"
     return (
         f"logs {_number_label(metrics.get('otel_logs'))} · "
         f"metrics {_number_label(metrics.get('otel_metrics'))} · "
@@ -586,7 +586,7 @@ def _comparison_row(
         "tool_errors_label": _number_label(tool_errors),
         "changed_files_label": _number_label(changed_files, decimals=1),
         "evidence_label": _evidence_label(metric_values),
-        "evidence_note": "每次 trial 平均；没有 OTel 时显示 native 事件数，无法观测时保持未知",
+        "evidence_note": "每次 trial 平均；没有 OTel 时显示 Agent 原生事件数，无法观测时保持未知",
         "metrics": metric_values,
         "run_count": len(runs),
     }
@@ -637,7 +637,7 @@ _VARIANT_PIVOT_DEFINITIONS = (
     ("model_calls", "平均模型轮数", "behavior"),
     ("tool_errors", "平均工具错误", "behavior"),
     ("changed_files", "平均变更文件", "behavior"),
-    ("evidence", "OTel / native 证据", "evidence"),
+    ("evidence", "OTel / Agent 原生证据", "evidence"),
 )
 
 _CASE_PIVOT_DEFINITIONS = (
@@ -657,7 +657,7 @@ _CASE_PIVOT_DEFINITIONS = (
     ("model_calls", "模型轮数", "behavior"),
     ("tool_errors", "工具错误", "behavior"),
     ("changed_files", "变更文件", "behavior"),
-    ("evidence", "OTel / native 证据", "evidence"),
+    ("evidence", "OTel / Agent 原生证据", "evidence"),
 )
 
 
@@ -943,7 +943,7 @@ def build_experiment_comparison(
         "case_comparisons": case_comparisons,
         "case_filter_options": case_filter_options,
         "case_states": {option["id"]: option["state"] for option in case_filter_options},
-        "notes": "数值默认按每次 trial 平均；成本只在 Agent/OTel 实际提供时显示；没有 OTel 时保留 native 事件覆盖；未知不等于 0。",
+        "notes": "数值默认按每次 trial 平均；成本只在 Agent/OTel 实际提供时显示；没有 OTel 时保留 Agent 原生事件覆盖；未知不等于 0。",
     }
 
 

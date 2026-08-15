@@ -5,19 +5,22 @@
 <form method="post" action="/experiments/new" id="experiment-builder">
   <section class="builder-section">
     <div class="section-heading"><div><p class="eyebrow">步骤 1</p><h2>选择编码任务 Case</h2></div><span class="selection-count" id="case-count">已选 0 个 Case</span></div>
-    <p class="section-lede">同一个 Case 可能存在多个不可变版本。一次实验中每个 Case 只能选择一个版本；如果要比较版本，请创建另一项实验。</p>
+    <p class="section-lede">勾选要评测的 Case；每个 Case 默认使用最新可执行版本。历史版本只在下拉框中保留为只读参照，不能被新实验运行。</p>
     <div class="case-group-grid">
       {% for group in case_groups %}
       <fieldset class="case-group">
-        <legend><strong>{{ group.id }}</strong><span class="pill">{{ group.revisions|length }} 个版本</span></legend>
+        <legend><label class="case-select-label"><input type="checkbox" name="case_selected__{{ group.id }}" value="1" data-case-selected="{{ group.id }}" {% if group.id in selected_cases %}checked{% endif %}><strong>{{ group.id }}</strong></label><span class="pill">{{ group.revisions|length }} 个版本</span><a class="case-version-link" href="/cases/{{ group.id }}">查看版本说明</a></legend>
         <p class="case-group-prompt">{{ group.prompt|replace("targeted test", "定向测试")|replace("full suite", "完整测试套件") }}</p>
         <div class="case-revision-list">
-          {% for case in group.revisions %}
-          <label class="case-revision">
-            <input type="checkbox" name="case_path" value="{{ case.path }}" data-case-id="{{ group.id }}" {% if case.path in selected_cases %}checked{% endif %}>
-            <span><strong>版本 {{ case.revision[:12] }}</strong><small>{{ case.relative_path }} <span class="dot">·</span> verifier 超时 {{ case.timeout_seconds }} 秒</small></span>
+          <label class="case-revision-picker">版本
+            <select name="case_revision__{{ group.id }}" data-case-revision="{{ group.id }}" {% if group.id not in selected_cases %}disabled{% endif %}>
+              {% for case in group.revisions %}
+              <option value="{{ case.revision }}" {% if case.revision == selected_revisions.get(group.id, group.selected_revision) %}selected{% endif %} {% if not case.runnable %}disabled{% endif %}>{{ case.revision[:12] }} · {% if case.is_current %}最新可执行版本{% else %}历史版本，仅供查看{% endif %}</option>
+              {% endfor %}
+            </select>
+            {% set current = group.revisions|selectattr("is_current")|list|first %}
+            {% if current %}<small>默认版本：{{ current.revision[:12] }} · verifier 超时 {{ current.timeout_seconds }} 秒 · {{ current.relative_path }}</small>{% endif %}
           </label>
-          {% endfor %}
         </div>
       </fieldset>
       {% else %}<div class="empty-state"><strong>没有发现 Case 定义</strong><p>请先在当前项目中准备一个不可变的编码任务 Case。</p></div>{% endfor %}
@@ -36,9 +39,9 @@
         <p class="agent-capability-note">{{ capabilities.notes|join("；") }}</p>
         {% if available %}
         <div class="agent-config-fields">
-          <label>Model（模型）/ 别名<input type="text" name="model_{{ agent.id }}" value="{{ form.get('model_' ~ agent.id, ['default'])[-1] }}" aria-label="模型 {{ agent.id }}"></label>
-          <label>Provider（提供方）<input type="text" name="provider_{{ agent.id }}" value="{{ form.get('provider_' ~ agent.id, ['default'])[-1] }}" aria-label="Provider {{ agent.id }}"></label>
-          <div class="two-col"><label>运行模式<select name="run_mode_{{ agent.id }}"><option value="native">原生（native）</option><option value="controlled">受控（controlled）</option></select></label><label>观测配置<select name="observation_profile_{{ agent.id }}"><option value="minimal">最小（minimal）</option><option value="telemetry">遥测（telemetry）</option><option value="deep">深度（deep）</option></select></label></div>
+          <label>Model / 别名<input type="text" name="model_{{ agent.id }}" value="{{ form.get('model_' ~ agent.id, ['default'])[-1] }}" aria-label="模型 {{ agent.id }}"></label>
+          <label>Provider<input type="text" name="provider_{{ agent.id }}" value="{{ form.get('provider_' ~ agent.id, ['default'])[-1] }}" aria-label="Provider {{ agent.id }}"></label>
+          <div class="two-col"><label>运行模式<select name="run_mode_{{ agent.id }}"><option value="native">原生</option><option value="controlled">受控</option></select></label><label>观测配置<select name="observation_profile_{{ agent.id }}"><option value="minimal">最小</option><option value="telemetry">遥测</option><option value="deep">深度</option></select></label></div>
           <label>Agent 专属配置（JSON，可选）<textarea name="config_{{ agent.id }}" placeholder='{"permission_mode":"..."}'>{{ form.get('config_' ~ agent.id, [''])[-1] }}</textarea></label>
         </div>
         {% else %}<div class="unsupported-note">当前页面不会把不可用 Agent 放进合法 Variant。</div>{% endif %}
@@ -62,7 +65,8 @@
 </form>
 <script>
 (() => {
-  const caseInputs = [...document.querySelectorAll('input[data-case-id]')];
+  const caseInputs = [...document.querySelectorAll('input[data-case-selected]')];
+  const revisionInputs = [...document.querySelectorAll('select[data-case-revision]')];
   const agentInputs = [...document.querySelectorAll('input[data-agent-choice]')];
   const caseCount = document.querySelector('#case-count');
   const agentCount = document.querySelector('#agent-count');
@@ -77,9 +81,13 @@
     agentCount.textContent = `已选 ${selectedAgents} 个 Variant`;
     const total = selectedCases * selectedAgents * trialCount;
     previewRuns.textContent = total;
-    previewText.textContent = total ? `${selectedCases} 个 Case × ${selectedAgents} 个 Variant × ${trialCount} 次试验 = ${total} 个 Run；每个 Run 都会保存 verifier、workspace、native 和 telemetry 证据。` : '请选择至少一个 Case 和一个可用 Variant。';
+    previewText.textContent = total ? `${selectedCases} 个 Case × ${selectedAgents} 个 Variant × ${trialCount} 次试验 = ${total} 个 Run；每个 Run 都会保存 verifier、workspace、Agent 原生记录和 telemetry 证据。` : '请选择至少一个 Case 和一个可用 Variant。';
   };
-  caseInputs.forEach((input) => input.addEventListener('change', () => { if (input.checked) caseInputs.filter((other) => other !== input && other.dataset.caseId === input.dataset.caseId).forEach((other) => { other.checked = false; }); update(); }));
+  caseInputs.forEach((input) => input.addEventListener('change', () => {
+    const revision = document.querySelector(`select[data-case-revision="${input.dataset.caseSelected}"]`);
+    if (revision) revision.disabled = !input.checked;
+    update();
+  }));
   agentInputs.forEach((input) => input.addEventListener('change', update));
   trials?.addEventListener('input', update);
   update();

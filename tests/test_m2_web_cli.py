@@ -5,7 +5,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from ael.persistence import Repository
-from ael.web import _build_experiment, _failure_rollups, create_app
+from ael.cases import load_case
+from ael.web import _build_experiment, _failure_rollups, _case_options, create_app
 
 
 def test_server_rendered_navigation_on_empty_repository(tmp_path):
@@ -65,6 +66,83 @@ verify:
         assert "当前工作区已注册" in str(exc)
     else:
         raise AssertionError("builder accepted a case outside the repository")
+
+
+def test_builder_reads_case_revision_select_and_defaults_to_current_fixture(tmp_path: Path):
+    case_dir = tmp_path / "examples" / "cases" / "inside"
+    fixture_dir = case_dir / "fixture"
+    fixture_dir.mkdir(parents=True)
+    (fixture_dir / "answer.txt").write_text("ok\n", encoding="utf-8")
+    case_path = case_dir / "case.yaml"
+    case_path.write_text(
+        """
+id: inside
+prompt: make the answer pass
+fixture:
+  path: fixture
+verify:
+  command: test "$(cat answer.txt)" = ok
+""",
+        encoding="utf-8",
+    )
+
+    repository = Repository(tmp_path)
+    case = load_case(case_path)
+    option = next(item for item in _case_options(repository) if item["id"] == case.id)
+    rows = [{"agent": {"id": "codex"}, "capabilities": {"available": True, "supports_models": True}}]
+
+    experiment, _ = _build_experiment(
+        repository,
+        rows,
+        {
+            "case_selected__inside": ["1"],
+            "case_revision__inside": [option["revision"]],
+            "agent_id": ["codex"],
+        },
+    )
+
+    assert experiment.suite.cases[0].id == "inside"
+    assert experiment.suite.cases[0].revision == case.revision
+
+
+def test_case_catalog_supports_register_update_and_soft_archive(tmp_path: Path):
+    case_dir = tmp_path / "examples" / "cases" / "managed"
+    fixture_dir = case_dir / "fixture"
+    fixture_dir.mkdir(parents=True)
+    (fixture_dir / "answer.txt").write_text("ok\n", encoding="utf-8")
+    (case_dir / "case.yaml").write_text(
+        """
+id: managed
+prompt: manage this case
+fixture:
+  path: fixture
+verify:
+  command: test "$(cat answer.txt)" = ok
+""",
+        encoding="utf-8",
+    )
+
+    client = TestClient(create_app(tmp_path))
+    response = client.post(
+        "/cases/new",
+        data={"case_path": "examples/cases/managed/case.yaml", "display_name": "可管理 Case", "notes": "用于目录测试"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "可管理 Case" in client.get("/cases").text
+
+    response = client.post(
+        "/cases/managed",
+        data={"action": "update", "display_name": "已更新 Case", "notes": "新的备注"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert "已更新 Case" in client.get("/cases/managed").text
+
+    response = client.post("/cases/managed", data={"action": "archive"}, follow_redirects=False)
+    assert response.status_code == 303
+    assert "已归档" in client.get("/cases/managed").text
+    assert "managed" not in client.get("/experiments/new").text
 
 
 def test_failure_page_rolls_up_legacy_per_run_rows():

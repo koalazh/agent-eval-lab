@@ -50,14 +50,21 @@ AEL 将原生输出和归一化事件与验证器真值分开保存：
     uv run ael ui --root . --host 127.0.0.1 --port 8713
 
 然后打开 `http://127.0.0.1:8713/experiments/new`，选择 `parser-boundary`、
-`premature-completion`、`state-reset`，勾选当前可用的真实 Agent，填写实际
-Model/Provider（或保留 `默认配置`），设置试验次数/并发数，点击
-`运行实验`。实验详情页的主体是 Case × Variant 矩阵；每个单元格都链接到
-对应真实 Run。不可用的 Agent 会保持“已禁用”，不会被当作验收证据。
+`premature-completion`、`state-reset`。每个 Case 只显示一个版本下拉框，默认选择当前
+可执行版本；历史版本只保留为只读历史证据。再勾选当前可用的真实 Agent，填写实际
+Model/Provider（或保留 `默认配置`），设置试验次数/并发数，点击 `运行实验`。整个路径
+不需要手写实验 YAML；不可用的 Agent 会保持“已禁用”，不会被当作验收证据。
 
-实验详情页现在提供两层对比：上层 Case × Variant 矩阵负责快速发现稳定通过、稳定失败、不稳定和差异；下层 `Variant 总览` 与 `Case × Variant 指标明细` 用表格逐项展示 Agent 类型、Model、Provider、通过率、端到端耗时、OTel 耗时、输入/输出/缓存/总 tokens、成本、工具调用、模型轮数、工具错误、变更文件和 OTel signal 证据。表格中的数值默认是每次 trial 平均，未知不会用 0 代替；点击矩阵单元格仍可进入具体 Run 或失败分析器。
+实验详情页先展示真正用于决策的 Case 级对比：每个 Case 一张“指标为行、Variant 为列”的表，
+逐项比较 Agent 类型、Model、Provider、Verifier 结果、端到端时延、OTel 时延、输入/输出/缓存/总
+tokens、成本、工具调用、模型轮数、工具错误、变更文件和 OTel/native 证据。数值默认是每次
+trial 平均，未知不会用 0 代替；筛选会直接收窄 Case、结果状态和指标视角。完整的 Case × Variant
+状态只作为折叠的结果导航，用于打开具体 Run 或失败分析器，不把矩阵或 aggregate leaderboard
+当成主体。
 
-比较页面还可以按“差异 Case”“失败 / 不稳定”“资源成本”“证据覆盖”以及单个 Case 聚焦；筛选会同步收窄矩阵、指标行和 Case 对比卡片。指标采用“行 = 指标、列 = Variant”的阅读方式，适合横向比较大量资源与行为数据，而不是把 aggregate leaderboard 当成主体。
+比较页面支持按“差异 Case”“失败 / 不稳定”“资源成本”“证据覆盖”以及单个 Case 聚焦；这符合
+业界评测比较的核心心智：先找改动导致的回归或改善，再查看时延、tokens、成本、错误和证据覆盖，
+最后进入单次 Run 解释原因。
 
 仓库中不会保存凭据。缺失 CLI、provider（提供方）不可用、认证错误或速率限制会记录为基础设施/进程证据，不会被提升为 Agent 任务失败。
 
@@ -97,16 +104,20 @@ Collector 只绑定 loopback，使用 Docker 启动（不会启动 Grafana/Tempo
 OTel 是 AEL 的一个 Evidence Source（证据来源），不取代 Verifier（task truth）、Workspace
 （environment truth）或 Agent native trace；没有真实 telemetry 时 UI 会显示“证据不足”。对于
 Claude Code，只有提供 `AEL_OTEL_ENDPOINT` 时，`telemetry` 才会通过单次运行环境启用 metrics/logs；
-`deep` 还会显式打开 prompt 和 tool payload 字段。默认仍是 `minimal`。
+`deep` 还会显式打开 prompt 和 tool payload 字段。Codex 当前 CLI 不提供可用 OTel 输出，Run 页面会
+明确显示“Agent 未提供 OTel”，并回退到 native / usage 证据；AEL 不会把缺失的 OTel 伪造成 span。
+默认仍是 `minimal`。
 
 Run 页面会把这些证据分成几个可互相核对的视角：
 
 - `AEL trajectory`：只按真实观察到的 READ / MUTATE / TOOL / VERIFY / COMPLETE 强锚点归纳行为；不把
   隐藏推理当成事实；
 - `Telemetry` 摘要：显示 Model 调用、工具调用、输入/输出/总 tokens、缓存、成本、工具错误、活跃时长、Model、Collector
-  records 和 signal 分布；
+  记录和 signal 分布；没有 OTel 时改为显示 Agent 原生证据分布；
 - `OTel trace / event` 瀑布：按时间偏移、耗时、operation、状态和安全属性展开每条 log、metric 或真实
   span；点击事件可以查看属性，原始 JSONL 只在页面底部按需展开；
+- 文件行为统计：按文件显示可观察的 `C / R / U / D`（创建 / 读取 / 更新 / 删除）次数；如果只有
+  Workspace 变更而没有明确文件事件，会单独标注为回退估计，不冒充 Agent 操作；
 - 失败分析器（Failure Explorer）：把候选与 PASS reference 的强行为组局部对齐，并单独显示 Verifier、
   Workspace、native 和 OTel 的证据覆盖；顶部另有逐项指标表，直接比较时延、token、成本、工具调用和证据覆盖。
 
@@ -142,9 +153,9 @@ AEL 聚焦于矩阵执行、差异比较、证据融合、失败调查、失败�
 
 ## 差异证据
 
-确定性的失败分析器会先检查 Case revision，再选择最接近的 PASS 参考运行，并展示 SAME/CHANGED/UNKNOWN 变量、`CONTROLLED`/`PARTIAL`/`DESCRIPTIVE` 置信度、verifier/workspace 证据、归一化锚点时间线和首次有意义的分歧。如果参考 Run 或锚点证据不足，系统会明确说明，不会编造因果根因。
+确定性的失败分析器会先检查 Case 版本，再选择最接近的 PASS 参考运行，并展示 SAME/CHANGED/UNKNOWN 变量、`CONTROLLED`/`PARTIAL`/`DESCRIPTIVE` 置信度、verifier/workspace 证据、归一化锚点时间线和首次有意义的分歧。如果参考 Run 或锚点证据不足，系统会明确说明，不会编造因果根因。
 
-Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。失败分析器的 Follow-up Builder（后续实验构建器）会在同一 Case revision 上生成可编辑的 baseline/candidate 两个 Variant，真正写入 `verification_gate`、`run_mode` 或 Agent 变化后再运行，不需要用户离开 AEL 修改 YAML。
+Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。失败分析器的后续实验构建器会在同一 Case 版本上生成可编辑的基线 / 候选两个 Variant，真正写入 `verification_gate`、`run_mode` 或 Agent 变化后再运行，不需要用户离开 AEL 修改 YAML。
 
 ## 失败记录簿（Failure Book）
 

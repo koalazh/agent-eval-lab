@@ -7,10 +7,10 @@ from typing import Any
 
 
 _SIGNAL_LABELS = {
-    "traces": "OTel trace",
-    "logs": "OTel log",
-    "metrics": "OTel metric",
-    "native": "native trace",
+    "traces": "OTel trace / span",
+    "logs": "OTel 日志",
+    "metrics": "OTel 指标",
+    "native": "原生记录",
     "verifier": "Verifier",
     "workspace": "Workspace",
 }
@@ -57,6 +57,72 @@ _SAFE_ATTRIBUTE_KEYS = (
 
 _READ_TOOLS = {"read", "glob", "grep", "ls", "find", "search", "cat", "head", "tail"}
 _MUTATE_TOOLS = {"edit", "write", "apply_patch", "applypatch", "notebookedit"}
+
+
+_FILE_PATH_KEYS = {
+    "path",
+    "filepath",
+    "file_path",
+    "filename",
+    "file_name",
+}
+
+
+def _file_paths(value: Any, *, key: str = "") -> list[str]:
+    """Extract only explicit file path fields; never infer a path from text."""
+    paths: list[str] = []
+    normalized_key = key.lower().replace("-", "_")
+    if normalized_key in _FILE_PATH_KEYS and isinstance(value, str) and value.strip():
+        return [value.strip()]
+    if isinstance(value, dict):
+        for child_key, child_value in value.items():
+            paths.extend(_file_paths(child_value, key=str(child_key)))
+    elif isinstance(value, list):
+        for child_value in value:
+            paths.extend(_file_paths(child_value, key=key))
+    return paths
+
+
+def _event_file_paths(event: dict[str, Any]) -> list[str]:
+    return list(dict.fromkeys(_file_paths(_data(event))))
+
+
+def _file_label(path: str, changed_files: list[str]) -> str:
+    """Prefer the Workspace-relative name when native evidence uses a temp path."""
+    raw = path.strip()
+    for changed in changed_files:
+        changed_text = str(changed)
+        if raw == changed_text or raw.endswith("/" + changed_text) or raw.endswith("\\" + changed_text):
+            return changed_text
+        if raw.rsplit("/", 1)[-1] == changed_text.rsplit("/", 1)[-1]:
+            return changed_text
+    return raw.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] or raw
+
+
+def _tool_operation(tool: str, change_kind: str | None = None) -> str | None:
+    if change_kind:
+        normalized = change_kind.lower()
+        if normalized in {"create", "created", "add", "added"}:
+            return "create"
+        if normalized in {"delete", "deleted", "remove", "removed"}:
+            return "delete"
+        if normalized in {"update", "updated", "edit", "edited", "modify", "modified"}:
+            return "update"
+    normalized = tool.strip().lower().replace("-", "_")
+    if normalized in _READ_TOOLS:
+        return "read"
+    if normalized in _MUTATE_TOOLS:
+        return "update"
+    if normalized in {"delete", "remove", "rm"}:
+        return "delete"
+    return None
+
+
+def _native_tool_name(event: dict[str, Any]) -> str:
+    name = _event_name(event).strip()
+    if name and name.lower() not in {"tool", "tool_decision", "tool_result"}:
+        return name
+    return _tool_name(event)
 
 
 def _data(event: dict[str, Any]) -> dict[str, Any]:
@@ -214,6 +280,13 @@ def _operation(event: dict[str, Any]) -> str:
     if "active_time" in name:
         return "活跃时长"
     if kind == "final" and _signal(event) == "native":
+        event_type = str(_data(event).get("type") or event.get("name") or "").lower()
+        if event_type == "turn.started":
+            return "回合开始"
+        if event_type == "turn.completed":
+            return "回合完成"
+        if event_type == "result":
+            return "Agent 返回结果"
         return "Agent 完成"
     if kind == "final":
         return "结构化 OTel 事件"
@@ -244,6 +317,14 @@ def _kind_label(event: dict[str, Any]) -> str:
         return "会话次数"
     if "active_time" in name:
         return "活跃时长"
+    if kind == "final" and _signal(event) == "native":
+        event_type = str(_data(event).get("type") or event.get("name") or "").lower()
+        if event_type == "turn.started":
+            return "回合开始"
+        if event_type == "turn.completed":
+            return "回合完成"
+        if event_type == "result":
+            return "Agent 返回结果"
     return _KIND_LABELS.get(kind, kind)
 
 
@@ -544,9 +625,9 @@ def build_trace_view(
     if trace_count:
         note = f"已收到 {trace_count} 个真实 OTel trace span；按时间和耗时展开，属性可继续查看。"
     elif otel_events:
-        note = "当前 Run 未收到真实 trace span；以下按 OTel logs / metrics 展示，不把 event 或 metric 冒充 span。"
+        note = "当前 Run 未收到真实 trace span；以下按 OTel 日志 / 指标展示，不把 event 或 metric 冒充 span。"
     else:
-        note = "当前 Run 没有 OTel 事件；以下仅展示 native evidence 中可归一化的事件。"
+        note = "当前 Run 没有 OTel 事件；以下仅展示 Agent 原生证据中可归一化的事件。"
     return {
         "events": views,
         "otel_event_count": len(otel_events),
@@ -588,49 +669,55 @@ def build_telemetry_overview(
     telemetry: dict[str, Any],
     otel_events: list[dict[str, Any]],
     trace_view: dict[str, Any],
+    native_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     otel = telemetry.get("otel") if isinstance(telemetry.get("otel"), dict) else telemetry
-    input_tokens = otel.get("input_tokens")
-    output_tokens = otel.get("output_tokens")
-    total_tokens = None
-    input_number = _number(input_tokens)
-    output_number = _number(output_tokens)
-    if input_number is not None and output_number is not None:
-        total_tokens = input_number + output_number
-    cache_read = _metric_total_or_none(otel_events, "token.usage", "type", "cacheRead")
-    cache_creation = _metric_total_or_none(otel_events, "token.usage", "type", "cacheCreation")
-    cost = sum(
-        _number(_attributes(event).get("cost_usd")) or 0
-        for event in otel_events
-        if "cost.usage" in _event_name(event) or _attributes(event).get("cost_usd") is not None
-    )
-    models = sorted({str(_attributes(event).get("model")) for event in otel_events if _attributes(event).get("model")})
-    tool_results = [event for event in otel_events if str(event.get("kind") or "") == "tool_result"]
-    tool_errors = (
-        sum(1 for event in tool_results if str(_attributes(event).get("success")).lower() == "false")
-        if tool_results
-        else None
-    )
+    native_events = native_events or []
+    snapshot = build_metric_snapshot(telemetry, otel_events, native_events, trace_view)
+    input_tokens = snapshot.get("input_tokens")
+    output_tokens = snapshot.get("output_tokens")
+    total_tokens = snapshot.get("total_tokens")
+    cache_read = snapshot.get("cache_read_tokens")
+    cache_creation = snapshot.get("cache_creation_tokens")
+    cost = snapshot.get("cost_usd")
+    models = snapshot.get("models") or []
+    tool_errors = snapshot.get("tool_errors")
     signal_counts = trace_view.get("signal_counts", {})
+    native_event_count = trace_view.get("native_event_count", len(native_events))
+    value_source = "OTel / Agent 原生用量" if not otel_events else "OTel token 用量"
     cards = [
-        {"label": "Model 调用", "value": _number_label(otel.get("model_calls")), "detail": "由 api_request 事件归纳"},
-        {"label": "工具调用", "value": _number_label(otel.get("tool_calls")), "detail": "由 tool_decision 事件归纳"},
-        {"label": "输入 tokens", "value": _number_label(input_tokens), "detail": "OTel token 用量"},
-        {"label": "输出 tokens", "value": _number_label(output_tokens), "detail": "OTel token 用量"},
+        {"label": "Model 调用", "value": _number_label(snapshot.get("model_calls")), "detail": "由可观察 Model 事件归纳"},
+        {"label": "工具调用", "value": _number_label(snapshot.get("tool_calls")), "detail": "由可观察工具事件归纳"},
+        {"label": "输入 tokens", "value": _number_label(input_tokens), "detail": value_source},
+        {"label": "输出 tokens", "value": _number_label(output_tokens), "detail": value_source},
         {"label": "总 tokens", "value": _number_label(total_tokens), "detail": "输入 + 输出，不含 cache"},
-        {"label": "缓存读取", "value": _number_label(cache_read), "detail": "cacheRead metric"},
-        {"label": "缓存创建", "value": _number_label(cache_creation), "detail": "cacheCreation metric"},
+        {"label": "缓存读取", "value": _number_label(cache_read), "detail": "cacheRead / Agent 原生用量"},
+        {"label": "缓存创建", "value": _number_label(cache_creation), "detail": "cacheCreation / Agent 原生用量"},
         {"label": "工具错误", "value": _number_label(tool_errors), "detail": "由 tool_result 失败状态归纳"},
-        {"label": "成本", "value": f"{cost:.4f} USD" if cost else "未知", "detail": "仅在 Agent 提供 cost 时显示"},
+        {"label": "成本", "value": f"{cost:.4f} USD" if cost is not None else "未知", "detail": "仅在 Agent 提供 cost 时显示"},
         {"label": "活跃时长", "value": _format_duration(otel.get("duration_ms")), "detail": "OTel 耗时"},
-        {"label": "Model", "value": ", ".join(models) or "未知", "detail": "来自 OTel 属性"},
-        {"label": "关联事件", "value": f"{len(otel_events)} 条", "detail": "按 ael.run.id 关联"},
+        {"label": "Model", "value": ", ".join(models) or "未知", "detail": "来自实际事件属性"},
+        {
+            "label": "关联记录",
+            "value": f"{len(otel_events)} 条" if otel_events else f"{native_event_count} 条",
+            "detail": "按 ael.run.id 关联 OTel" if otel_events else "Agent 原生记录",
+        },
     ]
-    signals = [
-        {"key": "logs", "label": "logs", "value": signal_counts.get("logs", 0), "detail": "结构化行为事件"},
-        {"key": "metrics", "label": "metrics", "value": signal_counts.get("metrics", 0), "detail": "token / cost / code edit"},
-        {"key": "traces", "label": "traces", "value": signal_counts.get("traces", 0), "detail": "真实 span"},
-    ]
+    if otel_events:
+        signals = [
+            {"key": "logs", "label": "OTel 日志", "value": signal_counts.get("logs", 0), "detail": "结构化行为事件"},
+            {"key": "metrics", "label": "OTel 指标", "value": signal_counts.get("metrics", 0), "detail": "token / cost / code edit"},
+            {"key": "traces", "label": "OTel trace/span", "value": signal_counts.get("traces", 0), "detail": "真实 span"},
+        ]
+    else:
+        signals = [
+            {
+                "key": "native",
+                "label": "Agent 原生记录",
+                "value": trace_view.get("native_event_count", 0),
+                "detail": "没有 OTel 时使用的行为证据",
+            }
+        ]
     return {
         "cards": cards,
         "signals": signals,
@@ -762,6 +849,157 @@ def build_metric_snapshot(
     }
 
 
+def build_otel_status(
+    run: dict[str, Any],
+    telemetry: dict[str, Any] | None,
+    otel_events: list[dict[str, Any]],
+    trace_view: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Describe the OTel boundary without turning absence into an error."""
+    fingerprint = run.get("fingerprint") if isinstance(run.get("fingerprint"), dict) else {}
+    agent_id = str(fingerprint.get("agent_id") or run.get("variant_id") or "unknown")
+    if otel_events:
+        signals = Counter(_signal(event) for event in otel_events)
+        signal_text = "、".join(
+            f"{label} {signals[key]} 条"
+            for key, label in (("logs", "日志"), ("metrics", "指标"), ("traces", "trace/span"))
+            if signals.get(key)
+        )
+        return {
+            "state": "observed",
+            "label": "已接收 OTel",
+            "detail": f"Collector 已按 ael.run.id 关联 {len(otel_events)} 条记录（{signal_text or '未知 signal'}）。",
+            "class": "pill-success",
+        }
+    if agent_id in {"codex", "pi", "hermes", "custom-harness"}:
+        return {
+            "state": "not_supported",
+            "label": "Agent 未提供 OTel",
+            "detail": f"{agent_id} 当前没有可用的 OTel 输出；本页使用 Agent 原生记录和用量证据，不伪造 OTel。",
+            "class": "pill-warning",
+        }
+    return {
+        "state": "missing",
+        "label": "本次 Run 未收到 OTel",
+        "detail": "AEL 已准备 OTel 关联，但 Collector 没有收到属于本次 Run 的记录；请检查 Agent 配置与 Collector。",
+        "class": "pill-warning",
+    }
+
+
+def build_file_activity(
+    native_events: list[dict[str, Any]],
+    otel_events: list[dict[str, Any]],
+    changed_files: list[str] | None = None,
+    *,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Summarise observable per-file C/R/U/D operations.
+
+    A tool result is counted once, and a file_change lifecycle pair is deduped
+    by its item id. Workspace changes are only a labelled fallback when no
+    explicit file operation was observed.
+    """
+    changed_files = [str(path) for path in (changed_files or [])]
+    counters: dict[str, Counter[str]] = {}
+    sources: dict[str, set[str]] = {}
+    seen_file_changes: set[tuple[str, str, str]] = set()
+
+    def add(path: str, operation: str, source: str) -> None:
+        label = _file_label(path, changed_files)
+        if not label or operation not in {"create", "read", "update", "delete"}:
+            return
+        counters.setdefault(label, Counter())[operation] += 1
+        sources.setdefault(label, set()).add(source)
+
+    def process(events: list[dict[str, Any]], source: str) -> None:
+        pending_call: dict[str, Any] | None = None
+        for event in events:
+            if source == "native" and event.get("source") not in {None, "native"}:
+                continue
+            kind = str(event.get("kind") or "unknown")
+            if kind == "tool_call":
+                pending_call = {
+                    "tool": _native_tool_name(event),
+                    "paths": _event_file_paths(event),
+                }
+                continue
+            if kind == "tool_result":
+                result_paths = _event_file_paths(event)
+                call = pending_call or {"tool": _native_tool_name(event), "paths": []}
+                paths = result_paths or list(call.get("paths") or [])
+                operation = _tool_operation(str(call.get("tool") or ""))
+                for path in paths:
+                    if operation:
+                        add(path, operation, source)
+                pending_call = None
+                continue
+            if kind == "file_change":
+                item = _data(event).get("item")
+                item = item if isinstance(item, dict) else {}
+                item_id = str(item.get("id") or event.get("id") or "")
+                changes = item.get("changes") if isinstance(item.get("changes"), list) else []
+                for change in changes:
+                    if not isinstance(change, dict):
+                        continue
+                    path = str(change.get("path") or "").strip()
+                    operation = _tool_operation("", str(change.get("kind") or "update"))
+                    key = (item_id or path, path, operation or "unknown")
+                    if key in seen_file_changes:
+                        continue
+                    seen_file_changes.add(key)
+                    if path and operation:
+                        add(path, operation, source)
+                continue
+            if pending_call and kind not in {"unknown", "message"}:
+                operation = _tool_operation(str(pending_call.get("tool") or ""))
+                if operation:
+                    for path in pending_call.get("paths") or []:
+                        add(path, operation, source)
+                pending_call = None
+        if pending_call:
+            operation = _tool_operation(str(pending_call.get("tool") or ""))
+            if operation:
+                for path in pending_call.get("paths") or []:
+                    add(path, operation, source)
+
+    process(native_events, "native")
+    process(otel_events, "OTel")
+
+    fallback_labels = set(counters)
+    for path in changed_files:
+        label = _file_label(path, changed_files)
+        if label in fallback_labels:
+            continue
+        counters[label] = Counter(update=1)
+        sources[label] = {"Workspace"}
+
+    rows: list[dict[str, Any]] = []
+    for path in sorted(counters):
+        counter = counters[path]
+        total = sum(counter.values())
+        rows.append(
+            {
+                "path": path,
+                "create": counter.get("create", 0),
+                "read": counter.get("read", 0),
+                "update": counter.get("update", 0),
+                "delete": counter.get("delete", 0),
+                "total": total,
+                "source": "、".join(sorted(sources.get(path, set()))) or "未知",
+                "observed": "Workspace" not in sources.get(path, set()),
+            }
+        )
+    observed_operation_count = sum(row["total"] for row in rows if row["observed"])
+    return {
+        "rows": rows,
+        "file_count": len(rows),
+        "operation_count": sum(row["total"] for row in rows),
+        "observed_operation_count": observed_operation_count,
+        "note": "C/R/U/D 只统计可观察的 Agent 文件事件；没有明确文件事件时，Workspace 变更仅作为 U×1 的标记并单独注明。",
+        "run_id": run_id,
+    }
+
+
 def build_evidence_sources(
     run: dict[str, Any],
     verifier: dict[str, Any],
@@ -786,25 +1024,25 @@ def build_evidence_sources(
             "detail": "环境真值：只列出过滤 cache 后的变更文件。",
         },
         {
-            "label": "OTel logs",
+            "label": "OTel 日志",
             "value": f"{signal_counts.get('logs', 0)} 条",
             "status": "observed" if signal_counts.get("logs", 0) else "unknown",
             "detail": "行为证据：tool / model / lifecycle log event。",
         },
         {
-            "label": "OTel metrics",
+            "label": "OTel 指标",
             "value": f"{signal_counts.get('metrics', 0)} 条",
             "status": "observed" if signal_counts.get("metrics", 0) else "unknown",
             "detail": "行为证据：token / cost / code edit metric。",
         },
         {
-            "label": "OTel traces",
+            "label": "OTel trace/span",
             "value": f"{signal_counts.get('traces', 0)} 个 span" if signal_counts.get("traces", 0) else "未收到真实 span",
             "status": "observed" if signal_counts.get("traces", 0) else "unknown",
             "detail": "没有真实 span 时保持未知，不从 logs / metrics 推断 trace 层级。",
         },
         {
-            "label": "native 证据",
+            "label": "Agent 原生证据",
             "value": f"{trace_view.get('native_event_count', 0)} 条可读事件",
             "status": "observed" if trace_view.get("native_event_count") else "unknown",
             "detail": "Agent 原生事件；可能与 OTel tool event 重复，AEL 视图会避免重复堆叠。",
@@ -866,6 +1104,13 @@ def _trajectory_step(event: dict[str, Any], related: list[dict[str, Any]] | None
     }
 
 
+def _is_observed_completion(event: dict[str, Any]) -> bool:
+    if str(event.get("kind") or "unknown") != "final" or _signal(event) != "native":
+        return False
+    event_type = str(_data(event).get("type") or event.get("name") or "").lower()
+    return event_type in {"result", "turn.completed", "run.completed", "final", "completed"}
+
+
 def build_trajectory(
     otel_events: list[dict[str, Any]],
     native_events: list[dict[str, Any]],
@@ -889,7 +1134,7 @@ def build_trajectory(
             )
             or (
                 str(event.get("kind") or "unknown") == "final"
-                and _signal(event) == "native"
+                and _is_observed_completion(event)
             )
         )
     ]
