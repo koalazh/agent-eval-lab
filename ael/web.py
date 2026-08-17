@@ -3,13 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import shlex
 import shutil
 import uuid
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -19,10 +18,9 @@ import yaml
 from .agents import builtin_real_drivers, probe_registry
 from .cases import ExperimentSpec, SuiteSpec, discover_case_paths, load_case
 from .comparison import build_experiment_comparison, compare_run_details, compare_variant_snapshots
-from .diagnosis import create_follow_up_experiment, diagnose_run
+from .diagnosis import diagnose_run
 from .failures import promote_failure
-from .drivers.custom import CustomCLIDriver
-from .models import Agent, AgentVariant, Capabilities, ObservationProfile, RunMode
+from .models import AgentVariant, ObservationProfile, RunMode
 from .persistence import Repository
 from .reports import matrix_report
 from .runner import Runner
@@ -40,7 +38,7 @@ from .trace_view import (
 
 
 def _case_options(repository: Repository) -> list[dict[str, Any]]:
-    """Return one current runnable option plus historical, read-only revisions."""
+    """Return authoring versions and frozen runnable CaseRevision snapshots."""
     options: dict[tuple[str, str], dict[str, Any]] = {}
     for path in discover_case_paths(repository.root):
         try:
@@ -62,10 +60,18 @@ def _case_options(repository: Repository) -> list[dict[str, Any]]:
         }
     for row in repository.list_cases():
         source_value = row.get("source_path")
-        if not source_value or row["id"] == "verify-answer-001":
+        if row["id"] == "verify-answer-001":
             continue
-        source = Path(source_value).resolve()
-        if not _is_within(repository.root, source) or not source.is_file():
+        source = Path(source_value).resolve() if source_value else None
+        snapshot = Path(row["snapshot_path"]).resolve() if row.get("snapshot_path") else None
+        runnable = bool(snapshot and (snapshot / "fixture").is_dir())
+        if source and _is_within(repository.root, source) and source.is_file():
+            display_path = source
+        elif snapshot and _is_within(repository.root, snapshot):
+            display_path = snapshot
+        else:
+            display_path = snapshot or source
+        if display_path is None:
             continue
         key = (row["id"], row["revision"])
         if key in options:
@@ -74,12 +80,13 @@ def _case_options(repository: Repository) -> list[dict[str, Any]]:
             "id": row["id"],
             "revision": row["revision"],
             "prompt": row["prompt"],
-            "path": str(source),
-            "relative_path": str(source.relative_to(repository.root)),
+            "path": str(display_path),
+            "relative_path": str(display_path.relative_to(repository.root)) if _is_within(repository.root, display_path) else str(display_path),
             "timeout_seconds": row["timeout_seconds"],
-            "runnable": False,
+            "runnable": runnable,
             "is_current": False,
-            "revision_note": "历史 Run 版本（当前工作区没有可执行快照）",
+            "snapshot_path": str(snapshot) if snapshot else None,
+            "revision_note": "历史冻结版本，可重跑" if runnable else "历史 Run 版本（没有可执行快照）",
         }
     return sorted(options.values(), key=lambda item: (item["id"], not item["is_current"], item["revision"]))
 
@@ -220,6 +227,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             otel_raw=session["raw"],
             native_raw="",
             visible_changed_files=[],
+            execution_receipt={},
         )
 
     @app.get("/sessions/{session_id}/case/new", response_class=HTMLResponse)
@@ -457,6 +465,12 @@ def create_app(root: str | Path = ".") -> FastAPI:
         selected_case_ids = [
             group["id"] for group in case_groups if requested_case and group["id"] == requested_case
         ]
+        selected_revisions = {group["id"]: group["selected_revision"] for group in case_groups}
+        requested_revision = request.query_params.get("case_revision")
+        if requested_case and requested_revision:
+            selected_revisions[requested_case] = requested_revision
+        selected_variants = request.query_params.getlist("variant_id")
+        source_run_id = request.query_params.get("source_run_id") or ""
         return render(
             request,
             "new_experiment.html",
@@ -466,13 +480,13 @@ def create_app(root: str | Path = ".") -> FastAPI:
             cases=cases,
             case_groups=case_groups,
             selected_cases=selected_case_ids,
-            selected_revisions={group["id"]: group["selected_revision"] for group in case_groups},
+            selected_revisions=selected_revisions,
             selected_agents=[row["agent"]["id"] for row in rows if row["capabilities"]["available"]],
-            selected_variants=[],
-            selected_baseline=None,
-            selected_candidate=None,
+            selected_variants=selected_variants,
+            selected_baseline=request.query_params.get("baseline_variant_id"),
+            selected_candidate=request.query_params.get("candidate_variant_id"),
             error=None,
-            form={},
+            form={"source_run_id": [source_run_id]} if source_run_id else {},
         )
 
     @app.post("/experiments/new", response_class=HTMLResponse)
@@ -485,7 +499,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         }
         rows = agent_rows()
         try:
-            experiment, custom_driver = _build_experiment(repository, rows, form)
+            experiment, _ = _build_experiment(repository, rows, form)
         except (TypeError, ValueError) as exc:
             return render(
                 request,
@@ -506,9 +520,6 @@ def create_app(root: str | Path = ".") -> FastAPI:
                 _status_code=400,
             )
         repository.save_experiment(experiment, status="PENDING")
-        if custom_driver:
-            runner.drivers[custom_driver.agent().id] = custom_driver
-            repository.save_agent(custom_driver.agent())
         background_runs[experiment.id] = asyncio.create_task(run_in_background(experiment))
         return RedirectResponse(f"/experiments/{experiment.id}", status_code=303)
 
@@ -555,6 +566,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
         verifier = _read_json(evidence / "verifier" / "result.json")
         telemetry = _read_json(evidence / "telemetry" / "summary.json")
         metadata = _read_json(evidence / "metadata.json")
+        execution_receipt = _read_json(evidence / "execution-receipt.json")
         native_events = _read_jsonl(evidence / "native" / "events.jsonl", limit=None)
         otel_events = _read_jsonl(evidence / "telemetry" / "otel" / "events.jsonl", limit=None)
         trace_view = build_trace_view(otel_events, native_events)
@@ -600,6 +612,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             otel_raw=_read_text(evidence / "telemetry" / "otel" / "raw.jsonl", limit=30000),
             native_raw=_read_text(evidence / "native" / "raw.jsonl", limit=30000),
             visible_changed_files=visible_changed_files,
+            execution_receipt=execution_receipt,
         )
 
     @app.get("/runs/{run_id}/explorer", response_class=HTMLResponse)
@@ -624,7 +637,7 @@ def create_app(root: str | Path = ".") -> FastAPI:
             "explorer.html",
             title=f"Contrast {run_id}",
             explorer=explorer,
-            diagnosis=diagnose_run(repository, run_id),
+            diagnosis=diagnose_run(repository, run_id, contrast=explorer),
             timeline_rows=_timeline_rows(explorer),
             candidate_trace=candidate_trace,
             reference_trace=reference_trace,
@@ -638,68 +651,36 @@ def create_app(root: str | Path = ".") -> FastAPI:
             reference_options=_contrast_options(repository, run_id),
         )
 
-    @app.get("/runs/{run_id}/follow-up/new", response_class=HTMLResponse)
-    async def follow_up_builder_page(request: Request, run_id: str):
-        try:
-            draft = create_follow_up_experiment(repository, run_id, save=False)
-        except ValueError as exc:
-            return HTMLResponse(str(exc), status_code=400)
-        return render(
-            request,
-            "follow_up.html",
-            title="后续实验",
-            run_id=run_id,
-            draft=draft,
-            agents=agent_rows(),
-            error=None,
+    @app.get("/runs/{run_id}/next-experiment")
+    async def next_experiment_page(request: Request, run_id: str):
+        run = repository.get_run(run_id)
+        if not run:
+            return HTMLResponse("未找到运行记录", status_code=404)
+        source_variant = repository.get_variant(str(run["variant_id"]))
+        if not source_variant:
+            return HTMLResponse("源 Run 使用的 Variant 不在 Variant 库中；请先保存一个持久 Variant", status_code=400)
+        case = repository.get_case(str(run["case_id"]), str(run["case_revision"]))
+        if not case or not case.fixture_path.is_dir():
+            return HTMLResponse("源 Run 的冻结 CaseRevision 不可用", status_code=400)
+        source = AgentVariant.from_dict(source_variant)
+        duplicate = replace(
+            source,
+            id=f"variant-{uuid.uuid4().hex[:10]}",
+            name=f"{source.name or source.id} · next candidate",
         )
-
-    @app.post("/runs/{run_id}/follow-up")
-    async def follow_up_page(request: Request, run_id: str):
-        form = {
-            key: values
-            for key, values in parse_qs(
-                (await request.body()).decode("utf-8"), keep_blank_values=True
-            ).items()
-        }
-        independent_variable = (form.get("independent_variable") or ["run_mode"])[-1]
-        candidate_agent_id = (form.get("candidate_agent_id") or [None])[-1] or None
-        try:
-            if independent_variable == "agent" and candidate_agent_id:
-                available = {
-                    row["agent"]["id"]
-                    for row in agent_rows()
-                    if row["capabilities"].get("available")
-                }
-                if candidate_agent_id not in available:
-                    raise ValueError(f"Candidate Agent 不可用：{candidate_agent_id}")
-            experiment = create_follow_up_experiment(
-                repository,
-                run_id,
-                independent_variable=independent_variable,
-                candidate_agent_id=candidate_agent_id,
-                trials=int((form.get("trials") or ["2"])[-1]),
-                max_concurrency=int((form.get("max_concurrency") or ["2"])[-1]),
-                save=False,
-            )
-        except (TypeError, ValueError) as exc:
-            try:
-                draft = create_follow_up_experiment(repository, run_id, save=False)
-            except ValueError:
-                return HTMLResponse(str(exc), status_code=400)
-            return render(
-                request,
-                "follow_up.html",
-                title="后续实验",
-                run_id=run_id,
-                draft=draft,
-                agents=agent_rows(),
-                error=str(exc),
-                _status_code=400,
-            )
-        repository.save_experiment(experiment, status="PENDING", follow_up_of=run_id)
-        background_runs[experiment.id] = asyncio.create_task(run_in_background(experiment))
-        return RedirectResponse(f"/experiments/{experiment.id}", status_code=303)
+        repository.save_variant(duplicate)
+        query = urlencode(
+            [
+                ("case_id", case.id),
+                ("case_revision", case.revision),
+                ("variant_id", source.id),
+                ("variant_id", duplicate.id),
+                ("baseline_variant_id", source.id),
+                ("candidate_variant_id", duplicate.id),
+                ("source_run_id", run_id),
+            ]
+        )
+        return RedirectResponse(f"/experiments/new?{query}", status_code=303)
 
     @app.get("/failures", response_class=HTMLResponse)
     async def failures_page(request: Request):
@@ -780,11 +761,69 @@ def _session_case_draft(session: dict[str, Any]) -> dict[str, Any]:
         "prompt": session.get("prompt") if session.get("prompt") not in {None, "UNKNOWN"} else "",
         "fixture_source": session.get("cwd") if session.get("cwd") not in {None, "UNKNOWN"} else "",
         "relevant_files": ", ".join(session.get("relevant_files") or []),
+        "exclude": "",
         "agent_model": f"{session.get('agent') or 'UNKNOWN'} / {', '.join(models) or 'UNKNOWN'}",
         "verifier_command": "",
         "timeout_seconds": "600",
         "notes": f"Source Session: {session_id}",
     }
+
+
+_DEFAULT_SESSION_EXCLUDES = {
+    ".git",
+    ".venv",
+    "node_modules",
+    ".env",
+    ".ael",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+}
+
+
+def _path_values(value: str) -> list[str]:
+    return [item.strip() for item in re.split(r"[,\n]", value) if item.strip()]
+
+
+def _copy_session_fixture(
+    source: Path,
+    destination: Path,
+    *,
+    relevant_files: list[str],
+    excludes: set[str],
+) -> None:
+    def excluded(relative: Path) -> bool:
+        return any(part in excludes for part in relative.parts)
+
+    def ignored(directory: str, names: list[str]) -> set[str]:
+        base = Path(directory)
+        return {
+            name
+            for name in names
+            if excluded((base / name).relative_to(source))
+        }
+
+    if not relevant_files:
+        shutil.copytree(source, destination, ignore=ignored)
+        return
+    for raw in relevant_files:
+        relative = Path(raw)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"relevant_files 必须是 fixture 目录内的相对路径：{raw}")
+        selected = (source / relative).resolve()
+        if not _is_within(source, selected) or not selected.exists():
+            raise ValueError(f"relevant_files 不存在：{raw}")
+        if excluded(relative):
+            raise ValueError(f"relevant_files 命中了默认排除目录：{raw}")
+        target = destination / relative
+        if selected.is_dir():
+            shutil.copytree(selected, target, ignore=ignored)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(selected, target)
 
 
 def _create_case_from_session(
@@ -799,6 +838,8 @@ def _create_case_from_session(
     display_name = first("display_name")
     prompt = first("prompt")
     fixture_source_value = first("fixture_source")
+    relevant_files = _path_values(first("relevant_files"))
+    excludes = _DEFAULT_SESSION_EXCLUDES | set(_path_values(first("exclude")))
     verifier_command = first("verifier_command")
     if not case_id:
         raise ValueError("必须填写 Case ID")
@@ -828,7 +869,12 @@ def _create_case_from_session(
         raise ValueError("fixture snapshot 不能包含即将创建的 Case 目录；请选择明确的 fixture 目录")
 
     case_root.mkdir(parents=True)
-    shutil.copytree(fixture_source, case_root / "fixture")
+    _copy_session_fixture(
+        fixture_source,
+        case_root / "fixture",
+        relevant_files=relevant_files,
+        excludes=excludes,
+    )
     case_path = case_root / "case.yaml"
     case_path.write_text(
         yaml.safe_dump(
@@ -908,6 +954,18 @@ def _build_variant(
             raise ValueError(f"{name} 必须是 JSON 对象")
         return parsed
 
+    def json_array(name: str) -> tuple[str, ...]:
+        value = first(name)
+        if not value:
+            return ()
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{name} 必须是 JSON 数组：{exc}") from exc
+        if not isinstance(parsed, list) or not all(isinstance(item, (str, int, float)) for item in parsed):
+            raise ValueError(f"{name} 必须是字符串数组")
+        return tuple(str(item) for item in parsed)
+
     try:
         run_mode = RunMode(first("run_mode", "native"))
         observation_profile = ObservationProfile(first("observation_profile", "minimal"))
@@ -916,6 +974,13 @@ def _build_variant(
     executable = first("executable", str(agent_row["agent"].get("binary") or agent_id))
     if not executable:
         raise ValueError("必须记录 executable")
+    if agent_id == "generic-cli":
+        resolved = Path(executable).expanduser()
+        if not (resolved.is_file() or shutil.which(executable)):
+            raise ValueError(f"Generic CLI executable 不可执行：{executable}")
+    prompt_transport = first("prompt_transport", "stdin") or "stdin"
+    if prompt_transport not in {"stdin", "argument"}:
+        raise ValueError("prompt transport 只能是 stdin 或 argument")
     return AgentVariant(
         id=variant_id or f"variant-{uuid.uuid4().hex[:10]}",
         agent_id=agent_id,
@@ -927,6 +992,10 @@ def _build_variant(
         provider=first("provider", "default") or "default",
         model_config=json_object("model_config"),
         harness_config=json_object("harness_config"),
+        arguments=json_array("arguments"),
+        prompt_transport=prompt_transport,
+        env_delta={str(key): str(value) for key, value in json_object("env_delta").items()},
+        version_command=json_array("version_command"),
         run_mode=run_mode,
         observation_profile=observation_profile,
     )
@@ -936,11 +1005,12 @@ def _build_experiment(
     repository: Repository,
     agent_rows: list[dict[str, Any]],
     form: dict[str, list[str]],
-) -> tuple[ExperimentSpec, CustomCLIDriver | None]:
+) -> tuple[ExperimentSpec, None]:
     def first(name: str, default: str = "") -> str:
         return (form.get(name) or [default])[-1].strip()
 
     case_paths: list[Path] = []
+    cases: list[Any] = []
     revision_fields = {
         key.removeprefix("case_revision__"): values[-1]
         for key, values in form.items()
@@ -967,25 +1037,37 @@ def _build_experiment(
             if not option:
                 raise ValueError(f"Case revision 不存在：{case_id} / {revision[:12]}")
             if not option.get("runnable"):
-                raise ValueError(f"Case revision {revision[:12]} 只有历史证据，当前工作区没有可执行快照；请选择最新版本")
-            case_paths.append(Path(option["path"]).resolve())
+                raise ValueError(f"Case revision {revision[:12]} 没有可执行快照；请先登记或沉淀该 Case")
+            if option.get("is_current"):
+                case_paths.append(Path(option["path"]).resolve())
+                try:
+                    cases.append(load_case(case_paths[-1]))
+                except (OSError, ValueError) as exc:
+                    raise ValueError(f"Case 不可用：{case_paths[-1]}（{exc}）") from exc
+            else:
+                historical = repository.get_case(case_id, revision)
+                if historical is None:
+                    raise ValueError(f"Case revision snapshot 不存在：{case_id} / {revision[:12]}")
+                case_paths.append(Path(option["path"]).resolve())
+                cases.append(historical)
     else:
         case_paths = [_resolve_case_path(repository.root, value) for value in form.get("case_path", []) if value]
     if not case_paths:
         raise ValueError("至少选择一个 Case")
-    cases = []
     selected_case_ids: set[str] = set()
-    for path in case_paths:
-        try:
-            case = load_case(path)
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"Case 不可用：{path}（{exc}）") from exc
+    if not cases:
+        for path in case_paths:
+            try:
+                case = load_case(path)
+            except (OSError, ValueError) as exc:
+                raise ValueError(f"Case 不可用：{path}（{exc}）") from exc
+            cases.append(case)
+    for case in cases:
         if case.id == "verify-answer-001":
             raise ValueError("旧 smoke Case 不属于真实编码任务 Case 实验路径")
         if case.id in selected_case_ids:
             raise ValueError(f"同一个 Case 只能选择一个 revision：{case.id}")
         selected_case_ids.add(case.id)
-        cases.append(case)
 
     capabilities = {row["agent"]["id"]: row["capabilities"] for row in agent_rows}
     selected_variant_ids = [value for value in form.get("variant_id", []) if value]
@@ -1025,7 +1107,8 @@ def _build_experiment(
                 trials=max(1, int(first("trials", "1"))),
                 max_concurrency=max(1, int(first("max_concurrency", "1"))),
                 metadata={
-                    "created_from": "web_variant_library",
+                    "created_from": "next_experiment" if first("source_run_id") else "web_variant_library",
+                    "source_run_id": first("source_run_id") or None,
                     "selected_case_paths": [str(path) for path in case_paths],
                     "variant_ids": selected_variant_ids,
                     "baseline_variant_id": baseline_id or None,
@@ -1040,47 +1123,9 @@ def _build_experiment(
     if not selected_agents:
         raise ValueError("至少选择一个可用 Agent")
     variants = []
-    custom_driver = None
     for agent_id in selected_agents:
-        if agent_id == "custom-harness":
-            command_text = first("custom_command")
-            if not command_text:
-                raise ValueError("选择自定义 Harness 后必须提供真实可执行命令")
-            try:
-                command = shlex.split(command_text)
-            except ValueError as exc:
-                raise ValueError(f"自定义 Harness 命令不合法：{exc}") from exc
-            if not command or not (Path(command[0]).exists() or shutil.which(command[0])):
-                raise ValueError(f"自定义 Harness 命令不可执行：{command[0] if command else command_text}")
-            custom_agent = Agent(
-                id="custom-harness",
-                display_name="自定义 Harness",
-                driver="custom",
-                binary=command[0],
-                detected_version="configured",
-                capabilities=Capabilities(
-                    available=True,
-                    version="configured",
-                    supports_models=False,
-                    supports_controlled=False,
-                    controlled_support="UNKNOWN",
-                    supports_telemetry=False,
-                    supports_deep=False,
-                    notes=("由用户在此实验中提供的本地命令；AEL 只记录可观察 native output。",),
-                ).to_dict(),
-            )
-            custom_driver = CustomCLIDriver(custom_agent, command)
-            variants.append(
-                AgentVariant(
-                    id="custom-harness-default",
-                    agent_id="custom-harness",
-                    model="default",
-                    provider="default",
-                    run_mode=RunMode.NATIVE,
-                    observation_profile=ObservationProfile.MINIMAL,
-                )
-            )
-            continue
+        if agent_id == "generic-cli":
+            raise ValueError("Generic CLI 必须先在 Variant 库中保存 executable、arguments 与 prompt transport")
         capability = capabilities.get(agent_id)
         if not capability or not capability.get("available"):
             raise ValueError(f"Agent 不可用：{agent_id}")
@@ -1124,13 +1169,14 @@ def _build_experiment(
             trials=max(1, int(first("trials", "1"))),
             max_concurrency=max(1, int(first("max_concurrency", "1"))),
             metadata={
-                "created_from": "web_builder",
+                "created_from": "next_experiment" if first("source_run_id") else "web_builder",
+                "source_run_id": first("source_run_id") or None,
                 "selected_case_paths": [str(path) for path in case_paths],
                 "agent_ids": selected_agents,
-                "custom_harness_configured": bool(custom_driver),
+                "custom_harness_configured": False,
             },
         ),
-        custom_driver,
+        None,
     )
 
 

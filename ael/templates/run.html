@@ -24,7 +24,7 @@
 </section>
 
 <nav class="run-section-nav" aria-label="Run 证据导航">
-  <a href="#telemetry">Telemetry 摘要</a><a href="#evidence">证据来源</a><a href="#files">文件行为</a><a href="#trajectory">行为轨迹</a><a href="#trace">详细 trace</a><a href="#truth">任务真值</a>
+  <a href="#telemetry">Telemetry 摘要</a><a href="#execution">Execution Receipt</a><a href="#evidence">证据来源</a><a href="#files">文件行为</a><a href="#trajectory">行为轨迹</a><a href="#trace">详细 trace</a><a href="#truth">任务真值</a>
 </nav>
 
 <section class="telemetry-section" id="telemetry">
@@ -54,6 +54,12 @@
       </dl>
     </div>
   </div>
+</section>
+
+<section class="telemetry-section" id="execution">
+  <div class="section-heading"><div><p class="eyebrow">Configured → Effective → Observed → Verified</p><h2>Execution Receipt</h2></div><span class="pill {% if execution_receipt.get('execution_source') == 'driver' %}pill-success{% else %}pill-warning{% endif %}">{{ execution_receipt.get('execution_source', 'UNKNOWN') }}</span></div>
+  <p class="section-lede">这份 receipt 在 ProcessSupervisor 启动前由同一个 resolved executable、argv、cwd、prompt hash 和环境增量生成；它不把配置声明冒充为 Agent 已观察行为。</p>
+  <div class="telemetry-context"><dl class="detail-list"><div><dt>Resolved executable</dt><dd><code>{{ execution_receipt.get('resolved_executable', 'UNKNOWN') }}</code></dd></div><div><dt>Effective argv</dt><dd><code>{{ execution_receipt.get('normalized_argv', ['UNKNOWN'])|join(' ') }}</code></dd></div><div><dt>Prompt hash</dt><dd><code>{{ execution_receipt.get('prompt_hash', 'UNKNOWN') }}</code></dd></div><div><dt>Effective execution hash</dt><dd><code>{{ execution_receipt.get('effective_execution_hash', 'UNKNOWN') }}</code></dd></div><div><dt>Environment delta</dt><dd><code>{{ execution_receipt.get('relevant_environment_delta', {})|tojson }}</code></dd></div></dl></div>
 </section>
 
 <section class="evidence-section" id="evidence">

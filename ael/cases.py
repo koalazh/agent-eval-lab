@@ -192,6 +192,10 @@ def _variant_from_raw(raw: dict[str, Any], index: int):
         provider=str(raw.get("provider") or "UNKNOWN"),
         model_config=dict(raw.get("model_config") or {}),
         harness_config=dict(raw.get("config") or raw.get("harness_config") or {}),
+        arguments=tuple(str(item) for item in (raw.get("arguments") or ())),
+        prompt_transport=str(raw.get("prompt_transport") or "stdin"),
+        env_delta={str(key): str(value) for key, value in dict(raw.get("env_delta") or {}).items()},
+        version_command=tuple(str(item) for item in (raw.get("version_command") or ())),
         run_mode=RunMode(str(raw.get("run_mode") or "native")),
         observation_profile=ObservationProfile(str(raw.get("observation_profile") or "minimal")),
     )

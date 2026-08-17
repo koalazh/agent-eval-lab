@@ -6,6 +6,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
+from dataclasses import replace
 from typing import Any
 
 from .cases import CaseSpec, ExperimentSpec
@@ -18,7 +19,7 @@ from .redaction import redact
 from .observation import filter_event_data, filter_jsonl
 from .otel_ingest import ingest_collector_output
 from .otel_lifecycle import AELLifecycle
-from .verifier import run_verifier
+from .verifier import VerifierResult, run_verifier
 from .workspace import WorkspaceManager
 
 
@@ -68,6 +69,10 @@ class Runner:
             "configured_provider": variant.provider,
             "model_config": redact(variant.model_config),
             "harness_config_hash": config_hash(variant.harness_config),
+            "arguments": list(variant.arguments),
+            "prompt_transport": variant.prompt_transport,
+            "env_delta": redact(variant.env_delta),
+            "version_command": list(variant.version_command),
             "run_mode": variant.run_mode.value,
             "observation_profile": variant.observation_profile.value,
             "case_id": case.id,
@@ -160,6 +165,7 @@ class Runner:
         verifier_result = None
         error = None
         changes = None
+        capture_error = None
         started = time.monotonic()
         agent_span = lifecycle.start("agent.execute", parent_span_id=run_span)
         try:
@@ -185,7 +191,23 @@ class Runner:
                     )
                 except Exception as exc:
                     lifecycle.end(verifier_span, error=f"{type(exc).__name__}: {exc}")
-                    raise
+                    verifier_result = VerifierResult(
+                        "ERROR",
+                        None,
+                        "",
+                        "",
+                        time.monotonic() - started,
+                        f"{type(exc).__name__}: {exc}",
+                    )
+                    verifier_dir = evidence_dir / "verifier"
+                    verifier_dir.mkdir(parents=True, exist_ok=True)
+                    (verifier_dir / "result.json").write_text(
+                        json.dumps(verifier_result.to_dict(), indent=2, sort_keys=True),
+                        encoding="utf-8",
+                    )
+                    status = RunStatus.VERIFIER_ERROR
+                    outcome = TaskOutcome.UNKNOWN
+                    error = verifier_result.error
                 if verifier_result.outcome == "PASS":
                     outcome = TaskOutcome.PASS
                 elif verifier_result.outcome == "FAIL":
@@ -217,9 +239,11 @@ class Runner:
                 )
             except Exception as exc:
                 lifecycle.end(capture_span, error=f"{type(exc).__name__}: {exc}")
-                raise
+                capture_error = f"Evidence capture failed: {type(exc).__name__}: {exc}"
             finally:
                 self.workspaces.cleanup(workspace)
+        if capture_error:
+            error = error or capture_error
         otel_events: list[ObservableEvent] = []
         otel_summary: dict[str, Any] = {
             "source": "otel_collector",
@@ -240,7 +264,7 @@ class Runner:
         lifecycle_dir.mkdir(parents=True, exist_ok=True)
         (lifecycle_dir / "ael-lifecycle.json").write_text(
             json.dumps(
-                {"payload": lifecycle.payload(), "export": lifecycle_export},
+                {"span_snapshot": lifecycle.span_snapshot(), "export": lifecycle_export},
                 indent=2,
                 sort_keys=True,
             ),
@@ -253,6 +277,24 @@ class Runner:
             otel_events, otel_summary = ingest_collector_output(self.repository.root, run_id, evidence_dir)
         otel_summary["ael_lifecycle"] = lifecycle_export
         events = [*result.native_events, *otel_events]
+        execution_receipt = result.execution_receipt or {
+            "resolved_executable": fingerprint.get("executable", UNKNOWN),
+            "argv": [fingerprint.get("executable", UNKNOWN), *list(variant.arguments)],
+            "normalized_argv": [fingerprint.get("executable", UNKNOWN), *list(variant.arguments)],
+            "cwd": str(workspace),
+            "prompt_hash": case.prompt_hash,
+            "prompt_transport": variant.prompt_transport,
+            "relevant_environment_delta": redact(variant.env_delta),
+            "effective_execution_hash": UNKNOWN,
+            "evidence": "driver did not expose a resolved execution receipt",
+        }
+        execution_receipt["execution_source"] = "driver" if result.execution_receipt else "fallback"
+        (evidence_dir / "execution-receipt.json").write_text(
+            json.dumps(redact(execution_receipt), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        fingerprint["effective_execution_hash"] = execution_receipt.get("effective_execution_hash", UNKNOWN)
+        self.repository.update_run_fingerprint(run_id, fingerprint)
         native_dir = evidence_dir / "native"
         native_dir.mkdir(parents=True, exist_ok=True)
         raw_native = filter_jsonl(result.stdout, variant.observation_profile)
@@ -336,11 +378,26 @@ class Runner:
             "error": error,
             "evidence_dir": str(evidence_dir),
             "fingerprint": fingerprint,
+            "execution_receipt": execution_receipt,
             "failure_id": failure_id,
         }
 
     async def run_experiment(self, experiment: ExperimentSpec) -> list[dict[str, Any]]:
-        self.repository.save_experiment(experiment, status="RUNNING")
+        stored = self.repository.load_experiment(experiment.id)
+        if stored is not None:
+            # A Web request may have persisted the definition before the
+            # background task starts.  The stored definition is authoritative;
+            # it already points at the frozen CaseRevision and Variant snapshot.
+            experiment = stored
+            self.repository.set_experiment_status(experiment.id, "RUNNING")
+        else:
+            frozen_cases = tuple(self.repository.freeze_case(case) for case in experiment.suite.cases)
+            if frozen_cases != experiment.suite.cases:
+                experiment = replace(
+                    experiment,
+                    suite=replace(experiment.suite, cases=frozen_cases),
+                )
+            self.repository.save_experiment(experiment, status="RUNNING")
         semaphore = asyncio.Semaphore(experiment.max_concurrency)
 
         async def one(case: CaseSpec, variant: AgentVariant, trial: int) -> dict[str, Any]:
@@ -359,9 +416,9 @@ class Runner:
             self.repository.set_experiment_status(experiment.id, "ERROR")
             raise
         self.repository.set_experiment_status(experiment.id, "COMPLETED")
-        source_run_id = experiment.metadata.get("follow_up_of_run")
+        source_run_id = experiment.metadata.get("source_run_id")
         if source_run_id:
-            from .failures import reconcile_follow_up
+            from .failures import reconcile_source_experiment
 
-            reconcile_follow_up(self.repository, experiment.id, str(source_run_id))
+            reconcile_source_experiment(self.repository, experiment.id, str(source_run_id))
         return results

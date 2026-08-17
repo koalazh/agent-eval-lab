@@ -6,12 +6,13 @@ from typing import Any
 
 from .drivers.base import AgentDriver
 from .drivers.fake import FakeAgentDriver
+from .drivers.generic_cli import GenericCLIDriver
 from .drivers.real import ClaudeCodeDriver, CodexDriver, HermesDriver, PiDriver
 from .persistence import Repository
 
 
 def builtin_real_drivers() -> dict[str, AgentDriver]:
-    drivers: list[AgentDriver] = [CodexDriver(), ClaudeCodeDriver(), PiDriver(), HermesDriver()]
+    drivers: list[AgentDriver] = [CodexDriver(), ClaudeCodeDriver(), PiDriver(), HermesDriver(), GenericCLIDriver()]
     return {driver.agent().id: driver for driver in drivers}
 
 

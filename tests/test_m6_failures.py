@@ -77,14 +77,14 @@ async def test_promote_pins_case_revision_and_regression_suite_can_rerun(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_promotion_rejects_changed_source_fixture(tmp_path):
+async def test_promotion_keeps_the_frozen_case_when_authoring_fixture_changes(tmp_path):
     repo = Repository(tmp_path)
     experiment = load_experiment(write_experiment(tmp_path))
     run = (await Runner(repo, {"fake-fail": FakeAgentDriver("fake-fail", "fail")}).run_experiment(experiment))[0]
     source_fixture = experiment.suite.cases[0].fixture_path / "answer.txt"
     source_fixture.write_text("changed after run\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="已不再匹配"):
-        promote_failure(repo, run["failure_id"])
+    promoted = promote_failure(repo, run["failure_id"])
+    assert (promoted.fixture_path / "answer.txt").read_text() == "wrong\n"
 
 
 @pytest.mark.asyncio
@@ -108,7 +108,7 @@ async def test_repeated_verifier_failure_is_clustered_and_reproduced(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_follow_up_requires_discriminating_baseline_and_candidate(tmp_path):
+async def test_next_experiment_requires_discriminating_baseline_and_candidate(tmp_path):
     repo = Repository(tmp_path)
     source_experiment = load_experiment(write_experiment(tmp_path))
     runner = Runner(repo, {"fake-fail": FakeAgentDriver("fake-fail", "fail"), "fake-pass": FakeAgentDriver("fake-pass", "pass")})
@@ -119,7 +119,7 @@ async def test_follow_up_requires_discriminating_baseline_and_candidate(tmp_path
         suite=source_experiment.suite,
         variants=(AgentVariant(id="candidate-only", agent_id="fake-pass", model="test", harness_config={"fake_behavior": "pass"}),),
         metadata={
-            "follow_up_of_run": source_run["run_id"],
+            "source_run_id": source_run["run_id"],
             "baseline_variant_id": "missing-baseline",
             "candidate_variant_id": "candidate-only",
         },
@@ -128,14 +128,14 @@ async def test_follow_up_requires_discriminating_baseline_and_candidate(tmp_path
     assert repo.get_failure(source_run["failure_id"])["status"] == "OBSERVED"
 
     discriminating = ExperimentSpec(
-        id="discriminating-follow-up",
+        id="discriminating-next-experiment",
         suite=SuiteSpec(source_experiment.suite.id, source_experiment.suite.kind, source_experiment.suite.cases),
         variants=(
             AgentVariant(id="baseline", agent_id="fake-fail", model="test", harness_config={"fake_behavior": "fail"}),
             AgentVariant(id="candidate", agent_id="fake-pass", model="test", harness_config={"fake_behavior": "pass"}),
         ),
         metadata={
-            "follow_up_of_run": source_run["run_id"],
+            "source_run_id": source_run["run_id"],
             "baseline_variant_id": "baseline",
             "candidate_variant_id": "candidate",
         },

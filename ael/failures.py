@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .cases import CaseSpec, ExperimentSpec, SuiteSpec, load_case
+from .cases import CaseSpec, ExperimentSpec, SuiteSpec
 from .hashing import canonical_json, hash_file_tree, sha256_text
 from .models import AgentVariant, FailureStatus
 from .persistence import Repository
@@ -79,10 +79,6 @@ def promote_failure(repository: Repository, failure_id: str) -> CaseSpec:
         raise ValueError("源 Case revision 不可用")
     if hash_file_tree(source_case.fixture_path) != source_case.fixture_hash:
         raise ValueError("source fixture 已不再匹配持久化的 Case revision")
-    if source_case.source_path and source_case.source_path.exists():
-        current_case = load_case(source_case.source_path)
-        if current_case.revision != source_case.revision:
-            raise ValueError("source Case 已不再匹配持久化的 revision")
     repository.append_suite_case("regression", "regression", source_case)
     details = dict(failure["details"])
     details["regression_case_id"] = source_case.id
@@ -92,7 +88,7 @@ def promote_failure(repository: Repository, failure_id: str) -> CaseSpec:
     return source_case
 
 
-def reconcile_follow_up(repository: Repository, experiment_id: str, source_run_id: str) -> str | None:
+def reconcile_source_experiment(repository: Repository, experiment_id: str, source_run_id: str) -> str | None:
     failure = repository.failure_for_run(source_run_id)
     source_run = repository.get_run(source_run_id)
     definition = repository.read_experiment_definition(experiment_id) or {}
@@ -136,7 +132,7 @@ def reconcile_follow_up(repository: Repository, experiment_id: str, source_run_i
     details = dict(failure["details"])
     details.update(
         {
-            "follow_up_experiment_id": experiment_id,
+            "next_experiment_id": experiment_id,
             "baseline_variant_id": baseline_id,
             "candidate_variant_id": candidate_id,
             "baseline_outcomes": baseline_outcomes,

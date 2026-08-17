@@ -4,13 +4,9 @@ import json
 import os
 import urllib.error
 import urllib.request
-import uuid
-from pathlib import Path
 from typing import Any
 
-from .cases import ExperimentSpec, SuiteSpec
 from .comparison import compare_run_details
-from .models import AgentVariant, RunMode
 from .persistence import Repository
 from .redaction import redact
 
@@ -21,8 +17,13 @@ def _display_values(value: Any) -> str:
     return str(value)
 
 
-def build_diagnosis_packet(repository: Repository, run_id: str) -> dict[str, Any]:
-    details = compare_run_details(repository, run_id)
+def build_diagnosis_packet(
+    repository: Repository,
+    run_id: str,
+    *,
+    contrast: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    details = contrast if contrast is not None else compare_run_details(repository, run_id)
     if not details:
         return {}
     candidate = details.get("candidate", {})
@@ -217,116 +218,12 @@ def _model_diagnosis(packet: dict[str, Any]) -> dict[str, Any] | None:
     return redact(value)
 
 
-def diagnose_run(repository: Repository, run_id: str) -> dict[str, Any]:
-    packet = build_diagnosis_packet(repository, run_id)
-    model_packet = _model_diagnosis(packet)
-    return model_packet or packet
-
-
-def _variant_from_definition(raw: dict[str, Any]) -> AgentVariant:
-    return AgentVariant.from_dict(raw)
-
-
-def _toggle_run_mode(mode: RunMode) -> RunMode:
-    return RunMode.CONTROLLED if mode == RunMode.NATIVE else RunMode.NATIVE
-
-
-def create_follow_up_experiment(
+def diagnose_run(
     repository: Repository,
     run_id: str,
     *,
-    independent_variable: str = "run_mode",
-    candidate_agent_id: str | None = None,
-    trials: int | None = None,
-    max_concurrency: int | None = None,
-    save: bool = True,
-) -> ExperimentSpec:
-    run = repository.get_run(run_id)
-    if not run:
-        raise ValueError(f"未找到运行记录：{run_id}")
-    definition = repository.read_experiment_definition(run["experiment_id"])
-    if not definition:
-        raise ValueError("源实验 definition 不可用，无法创建可运行的后续实验")
-    suite_id = str((definition.get("suite") or {}).get("id") or "follow-up")
-    cases = tuple(repository.suite_cases(suite_id))
-    if not cases:
-        raise ValueError("源 Case revision 不可用，无法创建相同 revision 的后续实验")
-    if not any(case.id == run["case_id"] and case.revision == run["case_revision"] for case in cases):
-        raise ValueError("源 Run 的 Case revision 不在原实验 Suite 中")
-    suite = SuiteSpec(suite_id, str((definition.get("suite") or {}).get("kind") or "coding"), cases)
-    source_raw = next(
-        (raw for raw in definition.get("variants", []) if raw.get("id") == run["variant_id"]),
-        None,
-    )
-    if not source_raw:
-        raise ValueError("源 Variant 不在原 experiment definition 中")
-    source_variant = _variant_from_definition(source_raw)
-    if independent_variable not in {"prompt_intervention", "run_mode", "agent"}:
-        raise ValueError("当前 Follow-up Builder 只支持 prompt intervention、run_mode 或 Agent")
-    if independent_variable == "agent":
-        if not candidate_agent_id:
-            raise ValueError("Agent 消融必须选择 candidate Agent")
-        candidate_agent = candidate_agent_id
-    else:
-        candidate_agent = source_variant.agent_id
-    baseline_config = dict(source_variant.harness_config)
-    candidate_config = dict(source_variant.harness_config)
-    baseline_mode = source_variant.run_mode
-    candidate_mode = source_variant.run_mode
-    if independent_variable == "prompt_intervention":
-        baseline_config["prompt_intervention"] = False
-        candidate_config["prompt_intervention"] = True
-    elif independent_variable == "run_mode":
-        candidate_mode = _toggle_run_mode(source_variant.run_mode)
-    baseline_id = f"baseline-{run_id[:8]}"
-    candidate_id = f"candidate-{run_id[:8]}"
-    baseline = AgentVariant(
-        id=baseline_id,
-        name=f"Baseline · {source_variant.name or source_variant.id}",
-        agent_id=source_variant.agent_id,
-        executable=source_variant.executable,
-        subject_revision=source_variant.subject_revision,
-        agent_version=source_variant.agent_version,
-        model=source_variant.model,
-        provider=source_variant.provider,
-        model_config=source_variant.model_config,
-        harness_config=baseline_config,
-        run_mode=baseline_mode,
-        observation_profile=source_variant.observation_profile,
-    )
-    candidate = AgentVariant(
-        id=candidate_id,
-        name=f"Candidate · {source_variant.name or source_variant.id}",
-        agent_id=candidate_agent,
-        executable=source_variant.executable,
-        subject_revision=source_variant.subject_revision,
-        agent_version=source_variant.agent_version,
-        model=source_variant.model if candidate_agent == source_variant.agent_id else "default",
-        provider=source_variant.provider if candidate_agent == source_variant.agent_id else "default",
-        model_config=source_variant.model_config if candidate_agent == source_variant.agent_id else {},
-        harness_config=candidate_config,
-        run_mode=candidate_mode,
-        observation_profile=source_variant.observation_profile,
-    )
-    experiment_id = f"follow-up-{run['experiment_id']}-{run_id[:8]}-{uuid.uuid4().hex[:6]}"
-    follow_up = ExperimentSpec(
-        id=experiment_id,
-        suite=suite,
-        variants=(baseline, candidate),
-        trials=max(1, trials if trials is not None else int(definition.get("trials") or 1)),
-        max_concurrency=max(1, max_concurrency if max_concurrency is not None else int(definition.get("max_concurrency") or 1)),
-        source_path=None,
-        metadata={
-            "created_from": "follow_up_builder",
-            "follow_up_of_run": run_id,
-            "independent_variable": independent_variable,
-            "baseline_variant_id": baseline_id,
-            "candidate_variant_id": candidate_id,
-            "baseline_value": baseline_mode.value if independent_variable == "run_mode" else baseline_config.get(independent_variable, False),
-            "candidate_value": candidate_mode.value if independent_variable == "run_mode" else candidate_config.get(independent_variable, True),
-            "source_variant_id": source_variant.id,
-        },
-    )
-    if save:
-        repository.save_experiment(follow_up, status="DRAFT", follow_up_of=run_id)
-    return follow_up
+    contrast: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    packet = build_diagnosis_packet(repository, run_id, contrast=contrast)
+    model_packet = _model_diagnosis(packet)
+    return model_packet or packet

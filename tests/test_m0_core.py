@@ -135,3 +135,30 @@ async def test_trials_are_isolated_and_flaky_is_observable(fake_runner, repo, tm
     results = await fake_runner.run_experiment(experiment)
     assert [item["outcome"] for item in results] == ["PASS", "FAIL", "PASS"]
     assert len({item["run_id"] for item in results}) == 3
+
+
+@pytest.mark.asyncio
+async def test_verifier_exception_is_not_reported_as_agent_process_error(fake_runner, repo, tmp_path, monkeypatch):
+    async def broken_verifier(*args, **kwargs):
+        raise OSError("verifier evidence write failed")
+
+    monkeypatch.setattr("ael.runner.run_verifier", broken_verifier)
+    result = (await fake_runner.run_experiment(make_experiment(tmp_path, "fake-pass", "pass")))[0]
+    assert result["status"] == "VERIFIER_ERROR"
+    assert result["outcome"] == "UNKNOWN"
+    assert "verifier evidence write failed" in result["error"]
+    assert repo.get_run(result["run_id"])["run_status"] == "VERIFIER_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_workspace_capture_failure_preserves_known_task_truth(fake_runner, repo, tmp_path, monkeypatch):
+    def broken_capture(*args, **kwargs):
+        raise OSError("capture unavailable")
+
+    monkeypatch.setattr(fake_runner.workspaces, "capture", broken_capture)
+    result = (await fake_runner.run_experiment(make_experiment(tmp_path, "fake-pass", "pass")))[0]
+    assert result["status"] == "COMPLETED"
+    assert result["outcome"] == "PASS"
+    assert result["changes"] is None
+    assert result["coverage"]["工作区"] == "✗"
+    assert repo.get_run(result["run_id"])["task_outcome"] == "PASS"

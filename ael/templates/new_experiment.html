@@ -3,9 +3,10 @@
 <section class="builder-hero"><p class="eyebrow">实验室 / 新建实验</p><h1>创建一次真实实验</h1><p class="home-lede">不需要手写实验 YAML（高级格式）。选择 Case 版本、真实 Agent 和运行策略，AEL 会自动展开合法的 Variant × Case × Trial。</p><div class="builder-steps"><span class="active"><b>1</b>选择 Case</span><i>→</i><span><b>2</b>配置 Variant</span><i>→</i><span><b>3</b>运行并比较</span></div></section>
 {% if error %}<section class="error"><strong>无法创建：</strong> {{ error }}</section>{% endif %}
 <form method="post" action="/experiments/new" id="experiment-builder">
+  {% if form.get('source_run_id') %}<input type="hidden" name="source_run_id" value="{{ form.get('source_run_id')[-1] }}">{% endif %}
   <section class="builder-section">
     <div class="section-heading"><div><p class="eyebrow">步骤 1</p><h2>选择编码任务 Case</h2></div><span class="selection-count" id="case-count">已选 0 个 Case</span></div>
-    <p class="section-lede">勾选要评测的 Case；每个 Case 默认使用最新可执行版本。历史版本只在下拉框中保留为只读参照，不能被新实验运行。</p>
+    <p class="section-lede">勾选要评测的 Case；每个 Case 默认使用最新版本。历史版本来自冻结的 CaseRevision，可直接重跑，运行不会读取后来修改的 authoring 文件。</p>
     <div class="case-group-grid">
       {% for group in case_groups %}
       <fieldset class="case-group">
@@ -15,7 +16,7 @@
           <label class="case-revision-picker">版本
             <select name="case_revision__{{ group.id }}" data-case-revision="{{ group.id }}" {% if group.id not in selected_cases %}disabled{% endif %}>
               {% for case in group.revisions %}
-              <option value="{{ case.revision }}" {% if case.revision == selected_revisions.get(group.id, group.selected_revision) %}selected{% endif %} {% if not case.runnable %}disabled{% endif %}>{{ case.revision[:12] }} · {% if case.is_current %}最新可执行版本{% else %}历史版本，仅供查看{% endif %}</option>
+              <option value="{{ case.revision }}" {% if case.revision == selected_revisions.get(group.id, group.selected_revision) %}selected{% endif %} {% if not case.runnable %}disabled{% endif %}>{{ case.revision[:12] }} · {% if case.is_current %}最新 authoring 版本{% elif case.runnable %}历史冻结版本，可重跑{% else %}历史版本，没有可执行快照{% endif %}</option>
               {% endfor %}
             </select>
             {% set current = group.revisions|selectattr("is_current")|list|first %}
@@ -91,6 +92,10 @@
     ['provider', 'Provider'],
     ['model_config', 'Model config'],
     ['harness_config', 'Harness config'],
+    ['arguments', 'Arguments'],
+    ['prompt_transport', 'Prompt transport'],
+    ['env_delta', 'Environment delta'],
+    ['version_command', 'Version command'],
     ['run_mode', 'Run mode'],
   ];
   const caseCount = document.querySelector('#case-count');

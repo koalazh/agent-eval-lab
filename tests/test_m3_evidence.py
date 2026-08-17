@@ -104,18 +104,18 @@ def test_otel_ingest_does_not_classify_free_text_as_an_action(tmp_path: Path):
     assert events[0].kind == "unknown"
 
 
-def test_ael_lifecycle_payload_keeps_real_parent_relationships():
+def test_ael_lifecycle_sdk_spans_keep_real_parent_relationships():
     lifecycle = AELLifecycle(endpoint=None, resource={"ael.run.id": "run-1"})
     root = lifecycle.start("ael.run")
     child = lifecycle.start("agent.execute", parent_span_id=root)
     lifecycle.end(child, attributes={"ael.run.status": "COMPLETED"})
     lifecycle.end(root, attributes={"ael.task.outcome": "PASS"})
 
-    spans = lifecycle.payload()["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    spans = lifecycle.span_snapshot()
     export = lifecycle.export()
     assert len(spans) == 2
-    assert spans[1]["parentSpanId"] == spans[0]["spanId"]
-    assert spans[0]["traceId"] == spans[1]["traceId"]
+    assert spans[1]["parent_span_id"] == spans[0]["span_id"]
+    assert spans[0]["trace_id"] == spans[1]["trace_id"]
     assert export["exported"] is False
     assert export["endpoint_configured"] is False
 

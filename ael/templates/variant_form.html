@@ -19,6 +19,16 @@
     <label>Model config（JSON）<textarea name="model_config" rows="5" placeholder='{"temperature": 0}'>{% if form.get('model_config') %}{{ form.get('model_config')[-1] }}{% elif variant.get('model_config') %}{{ variant.get('model_config')|tojson }}{% endif %}</textarea></label>
     <label>Harness config（JSON）<textarea name="harness_config" rows="5" placeholder='{"memory": false}'>{% if form.get('harness_config') %}{{ form.get('harness_config')[-1] }}{% elif variant.get('harness_config') %}{{ variant.get('harness_config')|tojson }}{% endif %}</textarea></label>
   </div>
+  <div class="comparison-preview">
+    <div class="section-heading"><div><p class="eyebrow">Generic CLI invocation</p><h3>真实启动配置</h3></div><span class="pill neutral">与 Run Receipt 同源</span></div>
+    <p class="muted">Generic CLI 会把这些字段持久化；arguments 中可使用 <code>{workspace}</code>，prompt transport 为 <code>argument</code> 时可使用 <code>{prompt}</code>。不要把凭据写入环境增量。</p>
+    <div class="two-col">
+      <label>Arguments（JSON 数组）<textarea name="arguments" rows="3" placeholder='["--mode", "coding"]'>{% if form.get('arguments') %}{{ form.get('arguments')[-1] }}{% elif variant.get('arguments') %}{{ variant.get('arguments')|tojson }}{% endif %}</textarea></label>
+      <label>Prompt transport<select name="prompt_transport"><option value="stdin" {% if form.get('prompt_transport', [variant.get('prompt_transport', 'stdin')])[-1] == 'stdin' %}selected{% endif %}>stdin</option><option value="argument" {% if form.get('prompt_transport', [variant.get('prompt_transport', 'stdin')])[-1] == 'argument' %}selected{% endif %}>argument</option></select></label>
+      <label>Environment delta（JSON 对象）<textarea name="env_delta" rows="3" placeholder='{"HARNESS_MODE": "v2"}'>{% if form.get('env_delta') %}{{ form.get('env_delta')[-1] }}{% elif variant.get('env_delta') %}{{ variant.get('env_delta')|tojson }}{% endif %}</textarea></label>
+      <label>Version command（JSON 数组，可选）<textarea name="version_command" rows="3" placeholder='["--version"]'>{% if form.get('version_command') %}{{ form.get('version_command')[-1] }}{% elif variant.get('version_command') %}{{ variant.get('version_command')|tojson }}{% endif %}</textarea></label>
+    </div>
+  </div>
   <div class="form-actions"><a class="button secondary" href="/variants">取消</a><button type="submit">保存 Variant</button></div>
 </form>
 {% if mode == "edit" %}<form method="post" action="/variants/{{ variant.id }}/duplicate" class="card"><div class="section-heading"><div><p class="eyebrow">复用</p><h2>Duplicate this Variant</h2></div><button class="button secondary" type="submit">Duplicate 后编辑</button></div><p class="muted">Duplicate 会生成新的持久 Variant ID；编辑副本不会改变已经创建的 Experiment snapshot。</p></form>{% endif %}

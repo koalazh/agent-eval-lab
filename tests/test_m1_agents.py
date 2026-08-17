@@ -36,7 +36,7 @@ def test_matrix_report_accepts_runner_summaries():
 
 def test_real_registry_probe_is_read_only_and_reports_current_path():
     drivers = builtin_real_drivers()
-    assert set(drivers) == {"codex", "claude-code", "pi", "hermes"}
+    assert set(drivers) == {"codex", "claude-code", "pi", "hermes", "generic-cli"}
     for driver in drivers.values():
         capabilities = driver.probe()
         assert isinstance(capabilities.available, bool)

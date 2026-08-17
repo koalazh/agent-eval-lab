@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,8 +22,9 @@ class Repository:
         self.ael_dir = self.root / ".ael"
         self.runs_dir = self.ael_dir / "runs"
         self.failures_dir = self.ael_dir / "failures"
+        self.case_revisions_dir = self.ael_dir / "case-revisions"
         self.db_path = self.ael_dir / "ael.db"
-        for path in (self.ael_dir, self.runs_dir, self.failures_dir):
+        for path in (self.ael_dir, self.runs_dir, self.failures_dir, self.case_revisions_dir):
             path.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -54,6 +56,10 @@ class Repository:
                     provider TEXT NOT NULL,
                     model_config_json TEXT NOT NULL,
                     harness_config_json TEXT NOT NULL,
+                    arguments_json TEXT NOT NULL DEFAULT '[]',
+                    prompt_transport TEXT NOT NULL DEFAULT 'stdin',
+                    env_delta_json TEXT NOT NULL DEFAULT '{}',
+                    version_command_json TEXT NOT NULL DEFAULT '[]',
                     run_mode TEXT NOT NULL,
                     observation_profile TEXT NOT NULL,
                     fingerprint_json TEXT NOT NULL
@@ -68,6 +74,7 @@ class Repository:
                     verifier_json TEXT NOT NULL,
                     timeout_seconds INTEGER NOT NULL,
                     constraints_json TEXT NOT NULL,
+                    snapshot_path TEXT,
                     PRIMARY KEY (id, revision)
                 );
                 CREATE TABLE IF NOT EXISTS case_catalog (
@@ -134,6 +141,7 @@ class Repository:
                 "SELECT id, source_run_id, created_at FROM failures"
             )
             self._ensure_variant_columns(db)
+            self._ensure_case_columns(db)
 
     @staticmethod
     def _ensure_variant_columns(db: sqlite3.Connection) -> None:
@@ -143,10 +151,20 @@ class Repository:
             "executable": "TEXT NOT NULL DEFAULT ''",
             "subject_revision": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
             "agent_version": "TEXT NOT NULL DEFAULT 'UNKNOWN'",
+            "arguments_json": "TEXT NOT NULL DEFAULT '[]'",
+            "prompt_transport": "TEXT NOT NULL DEFAULT 'stdin'",
+            "env_delta_json": "TEXT NOT NULL DEFAULT '{}'",
+            "version_command_json": "TEXT NOT NULL DEFAULT '[]'",
         }
         for name, definition in columns.items():
             if name not in existing:
                 db.execute(f"ALTER TABLE variants ADD COLUMN {name} {definition}")
+
+    @staticmethod
+    def _ensure_case_columns(db: sqlite3.Connection) -> None:
+        existing = {row[1] for row in db.execute("PRAGMA table_info(cases)")}
+        if "snapshot_path" not in existing:
+            db.execute("ALTER TABLE cases ADD COLUMN snapshot_path TEXT")
 
     def save_agent(self, agent: Agent) -> None:
         with self._connect() as db:
@@ -237,11 +255,23 @@ class Repository:
         if not row:
             return None
         value = dict(row)
+        snapshot_root = Path(value["snapshot_path"]).resolve() if value.get("snapshot_path") else None
+        snapshot_fixture = snapshot_root / "fixture" if snapshot_root else None
+        verifier_value = json.loads(value["verifier_json"])
+        if snapshot_root and snapshot_fixture and snapshot_fixture.is_dir():
+            fixture_path = snapshot_fixture
+            if verifier_value.get("python"):
+                verifier_name = Path(str(verifier_value["python"])).name
+                snapshot_verifier = snapshot_root / "verifier" / verifier_name
+                if snapshot_verifier.is_file():
+                    verifier_value = {"python": str(snapshot_verifier)}
+        else:
+            fixture_path = Path(value["fixture_path"])
         return CaseSpec(
             id=value["id"],
             prompt=value["prompt"],
-            fixture_path=Path(value["fixture_path"]),
-            verifier=VerifierSpec(**json.loads(value["verifier_json"])),
+            fixture_path=fixture_path,
+            verifier=VerifierSpec(**verifier_value),
             timeout_seconds=int(value["timeout_seconds"]),
             constraints=json.loads(value["constraints_json"]),
             source_path=Path(value["source_path"]) if value["source_path"] else None,
@@ -292,8 +322,9 @@ class Repository:
                 INSERT INTO variants(
                     id, name, agent_id, executable, subject_revision, agent_version,
                     model, provider, model_config_json, harness_config_json,
+                    arguments_json, prompt_transport, env_delta_json, version_command_json,
                     run_mode, observation_profile, fingerprint_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   name=excluded.name,
                   agent_id=excluded.agent_id,
@@ -304,6 +335,10 @@ class Repository:
                   provider=excluded.provider,
                   model_config_json=excluded.model_config_json,
                   harness_config_json=excluded.harness_config_json,
+                  arguments_json=excluded.arguments_json,
+                  prompt_transport=excluded.prompt_transport,
+                  env_delta_json=excluded.env_delta_json,
+                  version_command_json=excluded.version_command_json,
                   run_mode=excluded.run_mode,
                   observation_profile=excluded.observation_profile,
                   fingerprint_json=excluded.fingerprint_json
@@ -319,6 +354,10 @@ class Repository:
                     variant.provider,
                     json.dumps(redact(variant.model_config), sort_keys=True),
                     json.dumps(redact(variant.harness_config), sort_keys=True),
+                    json.dumps(list(variant.arguments), sort_keys=False),
+                    variant.prompt_transport,
+                    json.dumps(redact(variant.env_delta), sort_keys=True),
+                    json.dumps(list(variant.version_command), sort_keys=False),
                     variant.run_mode.value,
                     variant.observation_profile.value,
                     json.dumps(
@@ -333,9 +372,21 @@ class Repository:
 
     @staticmethod
     def _decode_variant(result: dict[str, Any]) -> dict[str, Any]:
-        for key in ("model_config_json", "harness_config_json", "fingerprint_json"):
+        for key in (
+            "model_config_json",
+            "harness_config_json",
+            "fingerprint_json",
+            "env_delta_json",
+            "arguments_json",
+            "version_command_json",
+        ):
             value = result.pop(key, None)
-            result[key.removesuffix("_json")] = json.loads(value) if value else {}
+            decoded = json.loads(value) if value else {}
+            result[key.removesuffix("_json")] = decoded
+        result["arguments"] = [str(item) for item in (result.get("arguments") or [])]
+        result["version_command"] = [str(item) for item in (result.get("version_command") or [])]
+        result["env_delta"] = {str(key): str(value) for key, value in (result.get("env_delta") or {}).items()}
+        result.setdefault("prompt_transport", "stdin")
         result.setdefault("name", "")
         result.setdefault("executable", "")
         result.setdefault("subject_revision", "UNKNOWN")
@@ -354,22 +405,106 @@ class Repository:
             rows = [dict(row) for row in db.execute("SELECT * FROM variants ORDER BY name, id")]
         return [self._decode_variant(row) for row in rows]
 
-    def save_case(self, case: CaseSpec) -> None:
+    def _case_snapshot_root(self, case_id: str, revision: str) -> Path:
+        return self.case_revisions_dir / case_id / revision
+
+    def freeze_case(self, case: CaseSpec) -> CaseSpec:
+        """Persist the exact Case inputs once and return the runnable snapshot."""
+        snapshot_root = self._case_snapshot_root(case.id, case.revision)
+        fixture_root = snapshot_root / "fixture"
+        verifier_root = snapshot_root / "verifier"
+        existing = self.get_case(case.id, case.revision)
+        if existing and snapshot_root.is_dir() and fixture_root.is_dir():
+            return existing
+        snapshot_root.mkdir(parents=True, exist_ok=True)
+        if not fixture_root.exists():
+            shutil.copytree(case.fixture_path, fixture_root)
+
+        verifier = case.verifier.to_dict()
+        if case.verifier.python:
+            source = Path(case.verifier.python)
+            if not source.is_absolute() and case.source_path:
+                source = case.source_path.parent / source
+            source = source.resolve()
+            if not source.is_file():
+                raise ValueError(f"Case verifier implementation 不存在：{source}")
+            verifier_root.mkdir(parents=True, exist_ok=True)
+            target = verifier_root / source.name
+            if not target.exists():
+                shutil.copy2(source, target)
+            verifier = {"python": str(target)}
+
+        metadata = {
+            "id": case.id,
+            "revision": case.revision,
+            "prompt": case.prompt,
+            "verifier": verifier,
+            "constraints": redact(case.constraints),
+            "timeout_seconds": case.timeout_seconds,
+            "fixture_hash": case.fixture_hash,
+            "authoring_source_path": str(case.source_path) if case.source_path else None,
+        }
+        (snapshot_root / "metadata.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return CaseSpec(
+            id=case.id,
+            prompt=case.prompt,
+            fixture_path=fixture_root,
+            verifier=VerifierSpec(**verifier),
+            timeout_seconds=case.timeout_seconds,
+            constraints=dict(case.constraints),
+            source_path=case.source_path,
+            revision=case.revision,
+            fixture_hash=case.fixture_hash,
+        )
+
+    def save_case(self, case: CaseSpec) -> CaseSpec:
+        existing = self.get_case(case.id, case.revision)
+        snapshot_root = self._case_snapshot_root(case.id, case.revision)
+        if existing and snapshot_root.is_dir() and (snapshot_root / "fixture").is_dir():
+            if (
+                existing.prompt != case.prompt
+                or existing.fixture_hash != case.fixture_hash
+                or existing.timeout_seconds != case.timeout_seconds
+                or existing.constraints != case.constraints
+            ):
+                raise ValueError(f"CaseRevision 已冻结，不能覆盖：{case.id}@{case.revision}")
+            return existing
+        frozen = self.freeze_case(case)
+        verifier_json = json.dumps(frozen.verifier.to_dict(), sort_keys=True)
         with self._connect() as db:
             db.execute(
-                "INSERT OR REPLACE INTO cases VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO cases(
+                    id, revision, source_path, fixture_path, fixture_hash, prompt,
+                    verifier_json, timeout_seconds, constraints_json, snapshot_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id, revision) DO UPDATE SET
+                    source_path=COALESCE(cases.source_path, excluded.source_path),
+                    fixture_path=excluded.fixture_path,
+                    fixture_hash=excluded.fixture_hash,
+                    prompt=excluded.prompt,
+                    verifier_json=excluded.verifier_json,
+                    timeout_seconds=excluded.timeout_seconds,
+                    constraints_json=excluded.constraints_json,
+                    snapshot_path=excluded.snapshot_path
+                """,
                 (
                     case.id,
                     case.revision,
                     str(case.source_path) if case.source_path else None,
-                    str(case.fixture_path),
-                    case.fixture_hash,
-                    case.prompt,
-                    json.dumps(case.verifier.to_dict(), sort_keys=True),
-                    case.timeout_seconds,
-                    json.dumps(redact(case.constraints), sort_keys=True),
+                    str(frozen.fixture_path),
+                    frozen.fixture_hash,
+                    frozen.prompt,
+                    verifier_json,
+                    frozen.timeout_seconds,
+                    json.dumps(redact(frozen.constraints), sort_keys=True),
+                    str(snapshot_root),
                 ),
             )
+        return frozen
 
     def save_suite(self, suite: SuiteSpec) -> None:
         with self._connect() as db:
@@ -380,41 +515,44 @@ class Repository:
                     suite.kind,
                     json.dumps([{"id": case.id, "revision": case.revision} for case in suite.cases]),
                 ),
-            )
+        )
         for case in suite.cases:
             self.save_case(case)
 
     def save_experiment(self, experiment: ExperimentSpec, status: str = "PENDING", follow_up_of: str | None = None) -> None:
         now = now_iso()
+        definition_json = json.dumps(redact(experiment.to_dict()), sort_keys=True, default=str)
         with self._connect() as db:
-            db.execute(
-                """
-                INSERT INTO experiments(id, suite_id, definition_json, trials, max_concurrency, status, follow_up_of, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                  suite_id=excluded.suite_id,
-                  definition_json=excluded.definition_json,
-                  trials=excluded.trials,
-                  max_concurrency=excluded.max_concurrency,
-                  status=excluded.status,
-                  follow_up_of=COALESCE(excluded.follow_up_of, experiments.follow_up_of),
-                  updated_at=excluded.updated_at
-                """,
-                (
-                    experiment.id,
-                    experiment.suite.id,
-                    json.dumps(redact(experiment.to_dict()), sort_keys=True, default=str),
-                    experiment.trials,
-                    experiment.max_concurrency,
-                    status,
-                    follow_up_of,
-                    now,
-                    now,
-                ),
-            )
+            existing = db.execute(
+                "SELECT definition_json, created_at, follow_up_of FROM experiments WHERE id=?",
+                (experiment.id,),
+            ).fetchone()
+            if existing:
+                if existing["definition_json"] != definition_json:
+                    raise ValueError(f"Experiment definition 已冻结，不能覆盖：{experiment.id}")
+                db.execute(
+                    "UPDATE experiments SET status=?, updated_at=?, follow_up_of=COALESCE(?, follow_up_of) WHERE id=?",
+                    (status, now, follow_up_of, experiment.id),
+                )
+            else:
+                db.execute(
+                    """
+                    INSERT INTO experiments(id, suite_id, definition_json, trials, max_concurrency, status, follow_up_of, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        experiment.id,
+                        experiment.suite.id,
+                        definition_json,
+                        experiment.trials,
+                        experiment.max_concurrency,
+                        status,
+                        follow_up_of,
+                        now,
+                        now,
+                    ),
+                )
         self.save_suite(experiment.suite)
-        for variant in experiment.variants:
-            self.save_variant(variant)
 
     def set_experiment_status(self, experiment_id: str, status: str) -> None:
         with self._connect() as db:
@@ -487,6 +625,13 @@ class Repository:
                     redact(error),
                     run_id,
                 ),
+            )
+
+    def update_run_fingerprint(self, run_id: str, fingerprint: dict[str, Any]) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE runs SET fingerprint_json=? WHERE id=?",
+                (json.dumps(redact(fingerprint), sort_keys=True, default=str), run_id),
             )
 
     @staticmethod
@@ -719,3 +864,31 @@ class Repository:
                 (experiment_id,),
             ).fetchone()
         return json.loads(row["definition_json"]) if row else None
+
+    def load_experiment(self, experiment_id: str) -> ExperimentSpec | None:
+        definition = self.read_experiment_definition(experiment_id)
+        if not definition:
+            return None
+        suite_raw = definition.get("suite") or {}
+        references = suite_raw.get("case_revisions") or []
+        cases: list[CaseSpec] = []
+        for reference in references:
+            if not isinstance(reference, dict):
+                continue
+            case = self.get_case(str(reference.get("id")), str(reference.get("revision")))
+            if case:
+                cases.append(case)
+        variants = tuple(AgentVariant.from_dict(raw) for raw in definition.get("variants") or [])
+        return ExperimentSpec(
+            id=str(definition.get("id") or experiment_id),
+            suite=SuiteSpec(
+                str(suite_raw.get("id") or definition.get("id") or experiment_id),
+                str(suite_raw.get("kind") or "development"),
+                tuple(cases),
+            ),
+            variants=variants,
+            trials=max(1, int(definition.get("trials") or 1)),
+            max_concurrency=max(1, int(definition.get("max_concurrency") or 1)),
+            source_path=Path(definition["source_path"]) if definition.get("source_path") else None,
+            metadata=dict(definition.get("metadata") or {}),
+        )

@@ -7,6 +7,9 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
   "jinja2>=3.1,<4",
+  "opentelemetry-api>=1.29,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.29,<2",
+  "opentelemetry-sdk>=1.29,<2",
   "pyyaml>=6.0,<7",
   "typer>=0.16,<1",
   "uvicorn>=0.34,<1",

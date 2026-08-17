@@ -23,6 +23,10 @@ _FINGERPRINT_FIELDS = (
     ("provider", "Provider"),
     ("model_config", "Model 配置"),
     ("harness_config_hash", "Harness 配置"),
+    ("arguments", "Arguments"),
+    ("prompt_transport", "Prompt transport"),
+    ("env_delta", "Environment delta"),
+    ("version_command", "Version command"),
     ("run_mode", "运行模式"),
     ("observation_profile", "观测配置"),
     ("runtime", "Runtime"),
@@ -40,8 +44,19 @@ _VARIANT_SNAPSHOT_FIELDS = (
     ("provider", "Provider"),
     ("model_config", "Model 配置"),
     ("harness_config", "Harness 配置"),
+    ("arguments", "Arguments"),
+    ("prompt_transport", "Prompt transport"),
+    ("env_delta", "Environment delta"),
+    ("version_command", "Version command"),
     ("run_mode", "运行模式"),
 )
+
+_VARIANT_SNAPSHOT_DEFAULTS = {
+    "arguments": [],
+    "prompt_transport": "stdin",
+    "env_delta": {},
+    "version_command": [],
+}
 
 
 def _value(fingerprint: dict[str, Any], field: str) -> Any:
@@ -72,8 +87,9 @@ def compare_variant_snapshots(
     unknown: list[str] = []
     changes: list[dict[str, str]] = []
     for field, label in _VARIANT_SNAPSHOT_FIELDS:
-        left = _known_snapshot_value(baseline.get(field, UNKNOWN))
-        right = _known_snapshot_value(candidate.get(field, UNKNOWN))
+        default = _VARIANT_SNAPSHOT_DEFAULTS.get(field, UNKNOWN)
+        left = _known_snapshot_value(baseline.get(field, default))
+        right = _known_snapshot_value(candidate.get(field, default))
         if left == UNKNOWN or right == UNKNOWN:
             unknown.append(label)
         elif canonical_json(left) == canonical_json(right):
@@ -418,6 +434,95 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return result
 
 
+def _execution_receipt(run: dict[str, Any]) -> dict[str, Any]:
+    value = run.get("execution_receipt")
+    if isinstance(value, dict):
+        return value
+    path = Path(run["run_dir"]) / "execution-receipt.json"
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _effective_execution(candidate: dict[str, Any] | None, reference: dict[str, Any] | None) -> dict[str, Any]:
+    if not candidate or not reference:
+        return {
+            "status": "UNKNOWN",
+            "label": "UNKNOWN",
+            "note": "没有成对的 same-source Execution Receipt。",
+        }
+    candidate_receipt = _execution_receipt(candidate)
+    reference_receipt = _execution_receipt(reference)
+    candidate_hash = candidate_receipt.get("effective_execution_hash") or (candidate.get("fingerprint") or {}).get("effective_execution_hash")
+    reference_hash = reference_receipt.get("effective_execution_hash") or (reference.get("fingerprint") or {}).get("effective_execution_hash")
+    if not candidate_hash or candidate_hash == UNKNOWN or not reference_hash or reference_hash == UNKNOWN:
+        status = "UNKNOWN"
+        note = "任一 Run 缺少可验证的 Effective execution hash。"
+    elif candidate_hash == reference_hash:
+        status = "SAME"
+        note = "NO EFFECTIVE CHANGE：两次 Run 的 resolved executable、argv、prompt hash 与相关环境增量相同。"
+    else:
+        status = "CHANGED"
+        note = "Effective execution changed：两次 Run 的实际进程输入不同。"
+    return {
+        "status": status,
+        "label": "NO EFFECTIVE CHANGE" if status == "SAME" else status,
+        "note": note,
+        "candidate_hash": candidate_hash or UNKNOWN,
+        "reference_hash": reference_hash or UNKNOWN,
+        "candidate_receipt": candidate_receipt,
+        "reference_receipt": reference_receipt,
+    }
+
+
+def _experiment_effective_execution(
+    repository: Repository,
+    runs: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    baseline_id = metadata.get("baseline_variant_id")
+    candidate_id = metadata.get("candidate_variant_id")
+    if not baseline_id or not candidate_id:
+        return {
+            "status": "UNKNOWN",
+            "label": "UNKNOWN",
+            "cases": [],
+            "note": "未指定 Baseline / Candidate，无法比较 Effective execution。",
+        }
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for run in runs:
+        grouped[(str(run.get("case_id")), str(run.get("variant_id")))].append(run)
+    cases: list[dict[str, Any]] = []
+    for case_id in sorted({str(run.get("case_id")) for run in runs}):
+        baseline = sorted(grouped.get((case_id, str(baseline_id)), []), key=lambda item: item.get("trial", 0))
+        candidate = sorted(grouped.get((case_id, str(candidate_id)), []), key=lambda item: item.get("trial", 0))
+        trial_rows = []
+        for left, right in zip(candidate, baseline):
+            trial_rows.append({"trial": left.get("trial"), **_effective_execution(left, right)})
+        statuses = {row["status"] for row in trial_rows}
+        status = "CHANGED" if "CHANGED" in statuses else "SAME" if statuses and statuses == {"SAME"} else "UNKNOWN"
+        cases.append(
+            {
+                "case_id": case_id,
+                "status": status,
+                "label": "NO EFFECTIVE CHANGE" if status == "SAME" else status,
+                "trials": trial_rows,
+            }
+        )
+    statuses = {case["status"] for case in cases}
+    status = "CHANGED" if "CHANGED" in statuses else "SAME" if statuses and statuses == {"SAME"} else "UNKNOWN"
+    return {
+        "status": status,
+        "label": "NO EFFECTIVE CHANGE" if status == "SAME" else status,
+        "cases": cases,
+        "note": "NO EFFECTIVE CHANGE：配置层面的差异没有改变实际启动输入。" if status == "SAME" else "实际启动输入发生变化，继续查看 Case×Variant 结果。" if status == "CHANGED" else "Effective execution 证据不完整。",
+    }
+
+
 def _timeline(repository: Repository, run: dict[str, Any]) -> list[dict[str, Any]]:
     steps = _action_steps(_events(repository, run))
     artifact = artifact_diff(repository, run)
@@ -484,6 +589,7 @@ def _run_summary(repository: Repository, run: dict[str, Any]) -> dict[str, Any]:
     trace_view = build_trace_view(otel_events, native_events)
     metrics = build_metric_snapshot(telemetry, otel_events, native_events, trace_view)
     fingerprint = run.get("fingerprint") if isinstance(run.get("fingerprint"), dict) else {}
+    execution_receipt = _execution_receipt(run)
     return {
         "status": run.get("run_status"),
         "outcome": run.get("task_outcome"),
@@ -499,6 +605,8 @@ def _run_summary(repository: Repository, run: dict[str, Any]) -> dict[str, Any]:
         "changed_files": artifact.get("meaningful_changed_files", []),
         "evidence_coverage": run.get("evidence_coverage", {}),
         "otel": otel,
+        "execution_receipt": execution_receipt,
+        "effective_execution_hash": execution_receipt.get("effective_execution_hash") or fingerprint.get("effective_execution_hash", UNKNOWN),
         "metrics": metrics,
         "metric_labels": {
             "total_tokens": _number_label(metrics.get("total_tokens")),
@@ -989,6 +1097,15 @@ def _metric_comparison_rows(
                 "delta": _pair_delta(left, right, kind),
             }
         )
+    effective = _effective_execution(candidate, reference)
+    rows.append(
+        {
+            "label": "Effective execution",
+            "candidate": effective.get("status", "UNKNOWN"),
+            "reference": "same-source receipt" if reference else "未知",
+            "delta": effective.get("label", "UNKNOWN"),
+        }
+    )
     return rows
 
 
@@ -1088,6 +1205,7 @@ def build_experiment_comparison(
         "case_filter_options": case_filter_options,
         "case_states": {option["id"]: option["state"] for option in case_filter_options},
         "decision_matrix": _decision_matrix(runs, metadata),
+        "effective_execution": _experiment_effective_execution(repository, runs, metadata),
         "comparison_validity": metadata.get("comparison") or {
             "validity": "DESCRIPTIVE" if metadata.get("baseline_variant_id") and metadata.get("candidate_variant_id") else "UNKNOWN",
             "changed": [],
@@ -1167,6 +1285,7 @@ def compare_run_details(
         None,
     )
     if not reference:
+        result["effective_execution"] = _effective_execution(candidate, None)
         result.update(
             {
                 "reference": None,
@@ -1181,6 +1300,7 @@ def compare_run_details(
         return result
     scope = variable_scope(candidate["fingerprint"], reference["fingerprint"])
     validity = comparison_confidence(scope)
+    effective_execution = _effective_execution(candidate, reference)
     candidate_timeline = _timeline(repository, candidate)
     reference_timeline = _timeline(repository, reference)
     divergence = _meaningful_divergence_from_steps(candidate_timeline, reference_timeline)
@@ -1225,6 +1345,7 @@ def compare_run_details(
             "artifact_diff": candidate_artifact,
             "variable_scope": scope,
             "comparison_validity": validity,
+            "effective_execution": effective_execution,
             "timeline_diff": {
                 "candidate": candidate_timeline,
                 "reference": reference_timeline,

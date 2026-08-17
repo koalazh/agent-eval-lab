@@ -35,7 +35,7 @@ AEL 将原生输出和归一化事件与验证器真值分开保存：
 
 ## 当前机器探测
 
-当前只读探测在本机发现 Codex CLI 0.147.0、Claude Code 2.1.229 和 Hermes 0.20.0。Pi 当前不在 PATH 中，因此会记录为不可用；AEL 不会静默安装或模拟缺失的 Agent。
+当前只读探测在本机发现 Codex CLI 0.147.0、Claude Code 2.1.229、Hermes 0.20.0，以及可配置的 Generic CLI Harness。Pi 当前不在 PATH 中，因此会记录为不可用；AEL 不会静默安装或模拟缺失的 Agent。
 
 真实 driver（驱动）使用当前 CLI 的机器接口：Codex `exec --json`、Claude 非交互 `stream JSON`、Pi RPC JSONL，以及带 usage 文件的 Hermes oneshot。每个 Run 的原生输出都保存在自己的原生证据目录中。
 
@@ -49,12 +49,15 @@ AEL 将原生输出和归一化事件与验证器真值分开保存：
 
     uv run ael ui --root . --host 127.0.0.1 --port 8713
 
-然后打开 `http://127.0.0.1:8713/experiments/new`，选择 Case 的可执行版本和 Variant。
-Variant 先在 `http://127.0.0.1:8713/variants` 中创建或 Duplicate；同一 Agent / Harness
+然后打开 `http://127.0.0.1:8713/experiments/new`，选择 Case 版本和持久 Variant。
+Variant 先在 `http://127.0.0.1:8713/variants` 中创建或 Duplicate；Generic CLI 的 executable、arguments、prompt transport、环境增量和可选 version command 都会持久化在 Variant 中，运行前会生成与实际进程输入同源的 Execution Receipt。每次 Run 都明确区分 Configured、Effective、Observed 和 Verified；如果两次启动输入相同，比较页显示 `NO EFFECTIVE CHANGE`。
+同一 Agent / Harness
 可以拥有多个 subject revision、model 和 harness config。选择 Baseline / Candidate 后，
 运行前页面会显示 Changed / Same / Unknown 以及 `CONTROLLED`、`PARTIAL` 或 `DESCRIPTIVE`
 comparison validity，再点击 `运行实验`。整个路径不需要手写实验 YAML；不可用的 Agent 会保持
 “已禁用”，不会被当作验收证据。
+
+历史 CaseRevision 由 `.ael/case-revisions/<case>/<revision>` 冻结保存，可以直接重跑；authoring 文件后来变化不会改写历史 Experiment。
 
 实验详情页先展示真正用于决策的 Case 级对比：每个 Case 一张“指标为行、Variant 为列”的表，
 逐项比较 Agent 类型、Model、Provider、Verifier 结果、端到端时延、OTel 时延、输入/输出/缓存/总
@@ -84,14 +87,14 @@ Run 默认使用 `minimal` 观察配置。`minimal` 和 `telemetry` 保留归一
 
 Claude Code OTel 的端到端路径是：Claude Code → OTLP HTTP → 仅本机 Collector →
 `.ael/otel/{logs,metrics,traces}.jsonl` → 按 `ael.run.id` 摄取 → Run 证据 / Explicit Contrast。
-每个 telemetry / deep Managed Run 还会由 AEL 自己产生 `ael.run`、`workspace.prepare`、
+每个 telemetry / deep Managed Run 还会由官方 OpenTelemetry API/SDK 产生 `ael.run`、`workspace.prepare`、
 `agent.execute`、`verifier.execute`、`workspace.capture` lifecycle spans；AEL trace 与 vendor
 Agent trace 不建立伪造 parent，只通过 `ael.run.id` 关联。
 
-当前真实 Claude proof Run `d0b926f4b18b4be482a6f7dd57053e1d`（Claude Code 2.1.229，1 个本地
+历史 Claude proof Run `d0b926f4b18b4be482a6f7dd57053e1d`（Claude Code 2.1.229，1 个本地
 Case，最终 PASS）在 Run evidence 中保存了 5 个 AEL lifecycle spans；Collector 按同一
-`ael.run.id` 收到 38 个 OTel log、15 个 OTel metric 和 5 个真实 AEL trace span。证据同时记录
-`ael-lifecycle.json` 的 OTLP export receipt 和 `telemetry/summary.json` 的 signal counts，不是
+`ael.run.id` 收到 38 个 OTel log、15 个 OTel metric 和 5 个真实 AEL trace span；这是历史证据，当前验收仍需重新检查新 Managed Run。证据同时记录
+`ael-lifecycle.json` 的官方 OTLP exporter receipt 和 `telemetry/summary.json` 的 signal counts，不是
 环境变量、空文件或 debug exporter 存在的证明。
 
 Collector 只绑定 loopback，使用 Docker 启动（不会启动 Grafana/Tempo/Prometheus/Jaeger）：
@@ -179,7 +182,7 @@ AEL 聚焦于 Variant、Case、Experiment、Run 的矩阵执行、差异比较�
 
 Explicit Contrast 会先检查 Case 版本，再使用 Experiment 的 Baseline/Candidate 关系或用户明确选择的 Reference，并展示 SAME/CHANGED/UNKNOWN 变量、`CONTROLLED`/`PARTIAL`/`DESCRIPTIVE` 置信度、verifier/workspace 证据、归一化锚点时间线和首次有意义的分歧。没有明确 Reference 时，系统保持 UNKNOWN，不会跨数据库猜 PASS。
 
-Diagnosis（诊断）使用这个紧凑证据包，而不是不受限的完整轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。后续实验构建器会在同一 Case 版本上生成可编辑的 Baseline / Candidate 两个 Variant，明确改变 `prompt intervention`、`run_mode` 或 Agent 后再运行，不需要用户离开 AEL 修改 YAML。
+Diagnosis（诊断）使用同一个 Explicit Contrast 证据包，而不是重新猜 Reference 或读取第二份轨迹。未配置 endpoint 时，系统仍会生成确定性的假设和未知项。配置 `AEL_DIAGNOSIS_BASE_URL`、`AEL_DIAGNOSIS_API_KEY` 与 `AEL_DIAGNOSIS_MODEL` 后，可以调用 OpenAI-compatible chat-completions endpoint；API key 只会放在请求 header 中。回归或失败 Run 可以进入“下一次 Experiment”：当前 Candidate 作为 Baseline，Duplicate 一个持久 Variant 后进入正常 Builder，由用户编辑后再运行同一 CaseRevision。
 
 ## 失败模式（诊断投影）
 

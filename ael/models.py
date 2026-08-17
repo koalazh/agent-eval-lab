@@ -100,6 +100,10 @@ class AgentVariant:
     provider: str = "UNKNOWN"
     model_config: Mapping[str, Any] = field(default_factory=dict)
     harness_config: Mapping[str, Any] = field(default_factory=dict)
+    arguments: tuple[str, ...] = ()
+    prompt_transport: str = "stdin"
+    env_delta: Mapping[str, str] = field(default_factory=dict)
+    version_command: tuple[str, ...] = ()
     run_mode: RunMode = RunMode.NATIVE
     observation_profile: ObservationProfile = ObservationProfile.MINIMAL
 
@@ -116,6 +120,10 @@ class AgentVariant:
             provider=str(raw.get("provider") or raw.get("configured_provider") or "UNKNOWN"),
             model_config=dict(raw.get("model_config") or {}),
             harness_config=dict(raw.get("harness_config") or raw.get("config") or {}),
+            arguments=tuple(str(item) for item in (raw.get("arguments") or ())),
+            prompt_transport=str(raw.get("prompt_transport") or "stdin"),
+            env_delta={str(key): str(value) for key, value in dict(raw.get("env_delta") or {}).items()},
+            version_command=tuple(str(item) for item in (raw.get("version_command") or ())),
             run_mode=RunMode(str(raw.get("run_mode") or "native")),
             observation_profile=ObservationProfile(str(raw.get("observation_profile") or "minimal")),
         )
@@ -134,6 +142,10 @@ class AgentVariant:
             "configured_provider": self.provider,
             "model_config": dict(self.model_config),
             "harness_config": dict(self.harness_config),
+            "arguments": list(self.arguments),
+            "prompt_transport": self.prompt_transport,
+            "env_delta": dict(self.env_delta),
+            "version_command": list(self.version_command),
             "run_mode": self.run_mode.value,
             "observation_profile": self.observation_profile.value,
         }
@@ -188,6 +200,7 @@ class DriverResult:
     process_error: str | None = None
     timed_out: bool = False
     cancelled: bool = False
+    execution_receipt: dict[str, Any] | None = None
 
     @property
     def completed_process(self) -> bool:

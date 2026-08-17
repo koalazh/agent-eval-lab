@@ -924,7 +924,7 @@ def build_otel_status(
             "detail": f"Collector 已按 {correlation} 关联 {len(otel_events)} 条记录（{signal_text or '未知 signal'}）。",
             "class": "pill-success",
         }
-    if agent_id in {"codex", "pi", "hermes", "custom-harness"}:
+    if agent_id in {"codex", "pi", "hermes", "generic-cli"}:
         return {
             "state": "not_supported",
             "label": "Agent 未提供 OTel",

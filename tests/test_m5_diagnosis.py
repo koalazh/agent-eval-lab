@@ -4,9 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from ael.cases import load_experiment
-from ael.diagnosis import build_diagnosis_packet, create_follow_up_experiment, diagnose_run
+from ael.cases import ExperimentSpec, SuiteSpec, load_experiment
+from ael.comparison import compare_run_details
+from ael.diagnosis import build_diagnosis_packet, diagnose_run
 from ael.drivers.fake import FakeAgentDriver
+from ael.models import AgentVariant
 from ael.persistence import Repository
 from ael.runner import Runner
 
@@ -33,7 +35,7 @@ def write_experiment(root: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_diagnosis_is_structured_and_followup_is_draft(tmp_path):
+async def test_diagnosis_uses_the_selected_contrast_and_case_snapshot(tmp_path):
     repo = Repository(tmp_path)
     experiment = load_experiment(write_experiment(tmp_path))
     runner = Runner(repo, {"fake-fail": FakeAgentDriver("fake-fail", "fail")})
@@ -48,12 +50,27 @@ async def test_diagnosis_is_structured_and_followup_is_draft(tmp_path):
 
     original_revision = repo.get_run(run["run_id"])["case_revision"]
     (experiment.suite.cases[0].fixture_path / "answer.txt").write_text("fixture changed\n", encoding="utf-8")
-    follow_up = create_follow_up_experiment(repo, run["run_id"])
-    assert follow_up.id.startswith("follow-up-diagnosis-exp-")
-    assert follow_up.suite.cases[0].revision == original_revision
-    stored = next(item for item in repo.list_experiments() if item["id"] == follow_up.id)
-    assert stored["status"] == "DRAFT"
-    assert stored["follow_up_of"] == run["run_id"]
+    frozen = repo.get_case("case-1", original_revision)
+    assert frozen.fixture_path != experiment.suite.cases[0].fixture_path
+    assert (frozen.fixture_path / "answer.txt").read_text() == "wrong\n"
+
+    pass_experiment = ExperimentSpec(
+        id="diagnosis-pass",
+        suite=SuiteSpec("development", "development", (frozen,)),
+        variants=(
+            AgentVariant(
+                id="fake-pass",
+                agent_id="fake-pass",
+                model="test",
+                harness_config={"fake_behavior": "pass"},
+            ),
+        ),
+    )
+    passed = (await Runner(repo, {"fake-pass": FakeAgentDriver("fake-pass", "pass")}).run_experiment(pass_experiment))[0]
+    contrast = compare_run_details(repo, run["run_id"], reference_run_id=passed["run_id"])
+    contrasted_packet = build_diagnosis_packet(repo, run["run_id"], contrast=contrast)
+    assert contrasted_packet["source_run_id"] == run["run_id"]
+    assert any(passed["run_id"] in item for item in contrasted_packet["evidence"])
 
 
 def test_diagnosis_without_reference_is_explicit(tmp_path):

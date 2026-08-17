@@ -4,6 +4,7 @@
 {% set prompt_value = (form.get("prompt") or [draft.prompt])[-1] %}
 {% set fixture_source_value = (form.get("fixture_source") or [draft.fixture_source])[-1] %}
 {% set relevant_files_value = (form.get("relevant_files") or [draft.relevant_files])[-1] %}
+{% set exclude_value = (form.get("exclude") or [draft.exclude])[-1] %}
 {% set verifier_command_value = (form.get("verifier_command") or [draft.verifier_command])[-1] %}
 {% set timeout_value = (form.get("timeout_seconds") or [draft.timeout_seconds])[-1] %}
 {% set notes_value = (form.get("notes") or [draft.notes])[-1] %}
@@ -44,6 +45,7 @@
     <label>可复现 prompt *<textarea name="prompt" rows="5" required placeholder="描述 Agent 在这个 Case 中需要完成什么">{{ prompt_value }}</textarea></label>
     <label>fixture snapshot 目录 *<input name="fixture_source" value="{{ fixture_source_value }}" required placeholder="/absolute/path/to/fixture-directory"><small>提交后会复制到当前工作区的 <code>examples/cases/&lt;case-id&gt;/fixture</code>；不会引用外部目录作为运行时 fixture。</small></label>
     <label>相关文件（线索，可修改）<textarea name="relevant_files" rows="2">{{ relevant_files_value }}</textarea></label>
+    <label>排除路径（可选，每行一个）<textarea name="exclude" rows="2" placeholder="默认排除：.git、.venv、node_modules、.env、.ael、__pycache__、build、dist">{{ exclude_value }}</textarea><small>默认排除会始终生效；相关文件选择只复制明确文件，不做智能最小化。</small></label>
     <label>Verifier command *<input name="verifier_command" value="{{ verifier_command_value }}" required placeholder='例如：test "$(cat answer.txt)" = expected'><small>必须由用户提供；AEL 不从 Agent 自述或 Session 事件自动生成 verifier。</small></label>
     <div class="two-col">
       <label>Timeout seconds<input type="number" name="timeout_seconds" min="1" value="{{ timeout_value }}"></label>

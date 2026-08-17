@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Iterable
 
+from ..execution import make_execution_receipt
 from ..models import Agent, Capabilities, DriverResult, ObservableEvent, RunContext
 from ..process import ProcessSupervisor
 
@@ -209,6 +210,13 @@ class CodexDriver(BinaryAgentDriver):
             command.extend(["--model", run_context.variant.model])
         if run_context.variant.run_mode.value == "controlled":
             command.extend(["--ignore-user-config", "--ignore-rules", "--sandbox", "workspace-write"])
+        execution_receipt = make_execution_receipt(
+            argv=command,
+            cwd=run_context.workspace,
+            prompt=run_context.case_prompt,
+            prompt_transport="stdin",
+            env=run_context.env,
+        )
         result = await process_supervisor.run(
             command,
             cwd=run_context.workspace,
@@ -236,6 +244,7 @@ class CodexDriver(BinaryAgentDriver):
             process_error=result.error,
             timed_out=result.timed_out,
             cancelled=result.cancelled,
+            execution_receipt=execution_receipt,
         )
 
 
@@ -286,6 +295,13 @@ class ClaudeCodeDriver(BinaryAgentDriver):
             command.extend(["--permission-mode", str(permission_mode)])
         if run_context.variant.run_mode.value == "controlled":
             command.extend(["--safe-mode"])
+        execution_receipt = make_execution_receipt(
+            argv=command,
+            cwd=run_context.workspace,
+            prompt=run_context.case_prompt,
+            prompt_transport="argument",
+            env=env,
+        )
         result = await process_supervisor.run(
             command,
             cwd=run_context.workspace,
@@ -312,6 +328,7 @@ class ClaudeCodeDriver(BinaryAgentDriver):
             process_error=result.error,
             timed_out=result.timed_out,
             cancelled=result.cancelled,
+            execution_receipt=execution_receipt,
         )
 
 
@@ -340,6 +357,13 @@ class PiDriver(BinaryAgentDriver):
             command.extend(["--model", run_context.variant.model])
         if run_context.variant.run_mode.value == "controlled":
             command.append("--no-context-files")
+        execution_receipt = make_execution_receipt(
+            argv=command,
+            cwd=run_context.workspace,
+            prompt=run_context.case_prompt,
+            prompt_transport="stdin-json-rpc",
+            env=run_context.env,
+        )
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -351,7 +375,11 @@ class PiDriver(BinaryAgentDriver):
                 start_new_session=True,
             )
         except OSError as exc:
-            return DriverResult(exit_code=None, process_error=str(exc))
+            return DriverResult(
+                exit_code=None,
+                process_error=str(exc),
+                execution_receipt=execution_receipt,
+            )
         assert process.stdin and process.stdout and process.stderr
         stderr_task = asyncio.create_task(process.stderr.read())
         raw_lines: list[str] = []
@@ -414,6 +442,7 @@ class PiDriver(BinaryAgentDriver):
                 final_text="".join(text_parts) or None,
                 session_id=str(session_id) if session_id else None,
                 timed_out=True,
+                execution_receipt=execution_receipt,
             )
         stderr = (await stderr_task).decode("utf-8", errors="replace")
         return DriverResult(
@@ -424,6 +453,7 @@ class PiDriver(BinaryAgentDriver):
             usage=usage,
             final_text="".join(text_parts) or None,
             session_id=str(session_id) if session_id else None,
+            execution_receipt=execution_receipt,
         )
 
 
@@ -459,6 +489,13 @@ class HermesDriver(BinaryAgentDriver):
             command.extend(["--provider", run_context.variant.provider])
         if run_context.variant.run_mode.value == "controlled":
             command.extend(["--ignore-user-config", "--ignore-rules", "--safe-mode"])
+        execution_receipt = make_execution_receipt(
+            argv=command,
+            cwd=run_context.workspace,
+            prompt=run_context.case_prompt,
+            prompt_transport="argument",
+            env=run_context.env,
+        )
         result = await process_supervisor.run(
             command,
             cwd=run_context.workspace,
@@ -482,6 +519,7 @@ class HermesDriver(BinaryAgentDriver):
                 process_error="Hermes usage report marked the run failed",
                 timed_out=result.timed_out,
                 cancelled=result.cancelled,
+                execution_receipt=execution_receipt,
             )
         events = [
             ObservableEvent("message", name="hermes", summary="oneshot output", source="native"),
@@ -498,4 +536,5 @@ class HermesDriver(BinaryAgentDriver):
             process_error=result.error,
             timed_out=result.timed_out,
             cancelled=result.cancelled,
+            execution_receipt=execution_receipt,
         )
